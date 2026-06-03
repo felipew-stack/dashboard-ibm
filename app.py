@@ -2,36 +2,19 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(
-    page_title="Dashboard IBM",
-    layout="wide"
-)
-
-# ==========================
-# CONFIGURAÇÃO DO ARQUIVO
-# ==========================
+st.set_page_config(page_title="Dashboard IBM", layout="wide")
 
 ARQUIVO_EXCEL = "Report IBM 01-06 (1) (3).xlsx"
 
-# ==========================
-# CABEÇALHO COM LOGO
-# ==========================
-
-logo_col, titulo_col = st.columns([1, 4])
-
-with logo_col:
-    st.image("logo_3am.png", width=180)
-
-with titulo_col:
-    st.title("Projeto IBM")
-    st.caption(
-        "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado"
-    )
-
-# ==========================
-# FUNÇÃO PARA CORRIGIR TEXTOS
-# ==========================
-
+def salvar_excel(df_total, df_pendentes):
+    with pd.ExcelWriter(
+        ARQUIVO_EXCEL,
+        engine="openpyxl",
+        mode="a",
+        if_sheet_exists="replace"
+    ) as writer:
+        df_total.to_excel(writer, sheet_name="Localidades Total", index=False)
+        df_pendentes.to_excel(writer, sheet_name="Localidades Pendentes", index=False)
 
 def corrigir_relatorio(texto):
     if pd.isna(texto):
@@ -62,49 +45,30 @@ def corrigir_relatorio(texto):
 
     return texto
 
-
-# ==========================
-# LEITURA DO EXCEL
-# ==========================
-
 try:
-    df_total = pd.read_excel(
-        ARQUIVO_EXCEL,
-        sheet_name="Localidades Total"
-    )
-
-    df_pendentes = pd.read_excel(
-        ARQUIVO_EXCEL,
-        sheet_name="Localidades Pendentes"
-    )
-
+    df_total = pd.read_excel(ARQUIVO_EXCEL, sheet_name="Localidades Total")
+    df_pendentes = pd.read_excel(ARQUIVO_EXCEL, sheet_name="Localidades Pendentes")
 except FileNotFoundError:
-    st.error(f"Arquivo '{ARQUIVO_EXCEL}' não encontrado na pasta do projeto.")
+    st.error(f"Arquivo '{ARQUIVO_EXCEL}' não encontrado.")
     st.stop()
-
 except Exception as erro:
     st.error("Erro ao carregar a planilha.")
     st.write(erro)
     st.stop()
 
-# ==========================
-# AJUSTES
-# ==========================
-
 df_total["Cidade"] = df_total["Cidade"].astype(str).str.strip()
 df_pendentes["Cidade"] = df_pendentes["Cidade"].astype(str).str.strip()
+df_pendentes["Prioridade"] = df_pendentes["Prioridade"].astype(str).str.strip()
 
 for df in [df_total, df_pendentes]:
     if "Data da Solicitação" in df.columns:
         df["Data da Solicitação"] = pd.to_datetime(
-            df["Data da Solicitação"],
-            errors="coerce"
+            df["Data da Solicitação"], errors="coerce"
         ).dt.strftime("%d/%m/%Y")
 
     if "Previsão" in df.columns:
         df["Previsão"] = pd.to_datetime(
-            df["Previsão"],
-            errors="coerce"
+            df["Previsão"], errors="coerce"
         ).dt.strftime("%d/%m/%Y")
 
 if "Relatório Detalhado" in df_pendentes.columns:
@@ -118,10 +82,6 @@ df_concluidas = df_total[
 
 df_relatorio = df_pendentes.copy()
 
-# ==========================
-# CÁLCULOS GERAIS
-# ==========================
-
 total = len(df_total)
 pendentes = len(df_pendentes)
 concluidas = len(df_concluidas)
@@ -131,9 +91,14 @@ alta = len(df_pendentes[df_pendentes["Prioridade"] == "Alta"])
 media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
 
-# ==========================
-# ABAS
-# ==========================
+logo_col, titulo_col = st.columns([1, 4])
+
+with logo_col:
+    st.image("logo_3am.png", width=180)
+
+with titulo_col:
+    st.title("Projeto IBM")
+    st.caption("Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado")
 
 aba_dashboard, aba_pendentes, aba_relatorio, aba_concluidas = st.tabs([
     "Dashboard",
@@ -141,10 +106,6 @@ aba_dashboard, aba_pendentes, aba_relatorio, aba_concluidas = st.tabs([
     "Relatório Detalhado",
     "Localidades Concluídas"
 ])
-
-# ==========================
-# ABA DASHBOARD
-# ==========================
 
 with aba_dashboard:
     st.divider()
@@ -198,10 +159,6 @@ with aba_dashboard:
 
         st.plotly_chart(fig_uf, use_container_width=True)
 
-# ==========================
-# ABA LOCALIDADES PENDENTES
-# ==========================
-
 with aba_pendentes:
     st.subheader("Filtros de Localidades Pendentes")
 
@@ -223,6 +180,7 @@ with aba_pendentes:
         )
 
     tabela = df_pendentes.copy()
+    tabela["__linha_original"] = tabela.index
 
     if busca:
         tabela = tabela[
@@ -235,37 +193,57 @@ with aba_pendentes:
     if uf != "Todas":
         tabela = tabela[tabela["UF"] == uf]
 
-    st.subheader("Localidades Pendentes")
+    st.subheader("Editar Prioridade")
+    st.caption("Na coluna Prioridade, clique duas vezes na célula e escolha Alta, Média ou Baixa.")
 
-    st.dataframe(
+    tabela_editada = st.data_editor(
         tabela,
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        key="editor_prioridade",
+        disabled=[
+            col for col in tabela.columns
+            if col not in ["Prioridade"]
+        ],
+        column_config={
+            "Prioridade": st.column_config.SelectboxColumn(
+                "Prioridade",
+                options=["Alta", "Média", "Baixa"],
+                required=True
+            ),
+            "__linha_original": None
+        }
     )
 
-# ==========================
-# ABA RELATÓRIO DETALHADO
-# ==========================
+    if st.button("Salvar alterações"):
+        for _, linha in tabela_editada.iterrows():
+            indice_original = int(linha["__linha_original"])
+            nova_prioridade = str(linha["Prioridade"]).strip()
+
+            if nova_prioridade in ["Alta", "Média", "Baixa"]:
+                df_pendentes.loc[indice_original, "Prioridade"] = nova_prioridade
+
+        salvar_excel(df_total, df_pendentes)
+
+        st.success("Prioridade atualizada com sucesso.")
+        st.rerun()
 
 with aba_relatorio:
     st.subheader("Relatório Detalhado das Localidades")
     st.caption("Situação atual de cada localidade pendente.")
 
     if "Relatório Detalhado" not in df_relatorio.columns:
-        st.warning(
-            "A coluna 'Relatório Detalhado' não foi encontrada na planilha.")
+        st.warning("A coluna 'Relatório Detalhado' não foi encontrada na planilha.")
     else:
         col_rel1, col_rel2, col_rel3 = st.columns(3)
 
         with col_rel1:
-            busca_relatorio = st.text_input(
-                "Pesquisar localidade no relatório")
+            busca_relatorio = st.text_input("Pesquisar localidade no relatório")
 
         with col_rel2:
             uf_relatorio = st.selectbox(
                 "Filtrar UF no relatório",
-                ["Todas"] +
-                sorted(df_relatorio["UF"].dropna().unique().tolist())
+                ["Todas"] + sorted(df_relatorio["UF"].dropna().unique().tolist())
             )
 
         with col_rel3:
@@ -313,10 +291,6 @@ with aba_relatorio:
                 st.markdown("**Situação:**")
                 st.write(relatorio)
 
-# ==========================
-# ABA LOCALIDADES CONCLUÍDAS
-# ==========================
-
 with aba_concluidas:
     st.subheader("Localidades Concluídas")
 
@@ -325,10 +299,6 @@ with aba_concluidas:
         use_container_width=True,
         hide_index=True
     )
-
-# ==========================
-# DOWNLOADS
-# ==========================
 
 st.divider()
 st.subheader("Exportação de Relatórios")
