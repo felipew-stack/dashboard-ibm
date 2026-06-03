@@ -17,7 +17,7 @@ with logo_col:
     st.image("logo_3am.png", width=180)
 
 with titulo_col:
-    st.title("Dashboard de Localidades IBM")
+    st.title("Projeto IBM")
     st.caption("Monitoramento de localidades abertas, pendentes e concluídas")
 
 # ==========================
