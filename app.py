@@ -1,10 +1,16 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import base64
 
 st.set_page_config(page_title="Dashboard IBM", layout="wide")
 
 ARQUIVO_EXCEL = "Report IBM 01-06 (1) (3).xlsx"
+
+
+def imagem_base64(caminho):
+    with open(caminho, "rb") as arquivo:
+        return base64.b64encode(arquivo.read()).decode()
 
 
 def salvar_excel(df_total, df_pendentes):
@@ -103,24 +109,24 @@ baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
 logo_col, titulo_col = st.columns([1, 4])
 
 with logo_col:
+    logo_base64 = imagem_base64("logo_3am.png")
+
     st.markdown(
-        """
+        f"""
         <div style="
             background-color: #0E1117;
-            padding: 12px;
-            border-radius: 12px;
-            display: flex;
-            justify-content: center;
+            padding: 14px 18px;
+            border-radius: 14px;
+            display: inline-flex;
             align-items: center;
-            width: fit-content;
+            justify-content: center;
+            min-width: 210px;
         ">
+            <img src="data:image/png;base64,{logo_base64}" style="width:180px;">
+        </div>
         """,
         unsafe_allow_html=True
     )
-
-    st.image("logo_3am.png", width=180)
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
 with titulo_col:
     st.title("Projeto IBM")
