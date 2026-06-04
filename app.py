@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import base64
+from io import BytesIO
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Dashboard IBM", layout="wide")
 
@@ -57,6 +60,137 @@ def corrigir_relatorio(texto):
         texto = texto.replace(errado, certo)
 
     return texto
+
+
+def gerar_excel_relatorio(df):
+    output = BytesIO()
+
+    df_export = df.copy()
+
+    colunas_preferidas = [
+        "UF",
+        "Cidade",
+        "Data da Solicitação",
+        "Previsão",
+        "Prioridade",
+        "Relatório Detalhado"
+    ]
+
+    colunas_existentes = [
+        coluna for coluna in colunas_preferidas
+        if coluna in df_export.columns
+    ]
+
+    df_export = df_export[colunas_existentes]
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_export.to_excel(
+            writer,
+            index=False,
+            sheet_name="Relatório Detalhado"
+        )
+
+        worksheet = writer.sheets["Relatório Detalhado"]
+
+        azul_escuro = "003B71"
+        azul_claro = "00A6D6"
+        branco = "FFFFFF"
+        cinza_claro = "F2F6FA"
+        vermelho = "F8D7DA"
+        amarelo = "FFF3CD"
+        verde = "D4EDDA"
+
+        borda_fina = Side(style="thin", color="D9E2EC")
+
+        for cell in worksheet[1]:
+            cell.fill = PatternFill(
+                start_color=azul_escuro,
+                end_color=azul_escuro,
+                fill_type="solid"
+            )
+            cell.font = Font(color=branco, bold=True)
+            cell.alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+                wrap_text=True
+            )
+            cell.border = Border(
+                left=borda_fina,
+                right=borda_fina,
+                top=borda_fina,
+                bottom=borda_fina
+            )
+
+        worksheet.row_dimensions[1].height = 28
+
+        for row in worksheet.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = Alignment(
+                    vertical="top",
+                    wrap_text=True
+                )
+                cell.border = Border(
+                    left=borda_fina,
+                    right=borda_fina,
+                    top=borda_fina,
+                    bottom=borda_fina
+                )
+
+                if cell.row % 2 == 0:
+                    cell.fill = PatternFill(
+                        start_color=cinza_claro,
+                        end_color=cinza_claro,
+                        fill_type="solid"
+                    )
+
+        if "Prioridade" in df_export.columns:
+            coluna_prioridade = df_export.columns.get_loc("Prioridade") + 1
+
+            for row in range(2, worksheet.max_row + 1):
+                celula = worksheet.cell(row=row, column=coluna_prioridade)
+                valor = str(celula.value).strip()
+
+                if valor == "Alta":
+                    celula.fill = PatternFill(
+                        start_color=vermelho,
+                        end_color=vermelho,
+                        fill_type="solid"
+                    )
+                    celula.font = Font(bold=True)
+
+                elif valor == "Média":
+                    celula.fill = PatternFill(
+                        start_color=amarelo,
+                        end_color=amarelo,
+                        fill_type="solid"
+                    )
+                    celula.font = Font(bold=True)
+
+                elif valor == "Baixa":
+                    celula.fill = PatternFill(
+                        start_color=verde,
+                        end_color=verde,
+                        fill_type="solid"
+                    )
+                    celula.font = Font(bold=True)
+
+        larguras = {
+            "UF": 10,
+            "Cidade": 28,
+            "Data da Solicitação": 22,
+            "Previsão": 18,
+            "Prioridade": 16,
+            "Relatório Detalhado": 90
+        }
+
+        for idx, coluna in enumerate(df_export.columns, start=1):
+            letra = get_column_letter(idx)
+            worksheet.column_dimensions[letra].width = larguras.get(coluna, 25)
+
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+    return output.getvalue()
 
 
 try:
@@ -426,8 +560,8 @@ with col_down2:
 
 with col_down3:
     st.download_button(
-        label="Baixar relatório detalhado em CSV",
-        data=df_relatorio.to_csv(index=False).encode("utf-8-sig"),
-        file_name="relatorio_detalhado.csv",
-        mime="text/csv"
+        label="Baixar relatório detalhado em Excel",
+        data=gerar_excel_relatorio(df_relatorio),
+        file_name="relatorio_detalhado.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
