@@ -61,7 +61,6 @@ except Exception as erro:
     st.write(erro)
     st.stop()
 
-
 df_total["Cidade"] = df_total["Cidade"].astype(str).str.strip()
 df_pendentes["Cidade"] = df_pendentes["Cidade"].astype(str).str.strip()
 df_pendentes["Prioridade"] = df_pendentes["Prioridade"].astype(str).str.strip()
@@ -77,12 +76,10 @@ for df in [df_total, df_pendentes]:
             df["Previsão"], errors="coerce"
         ).dt.strftime("%d/%m/%Y")
 
-
 if "Relatório Detalhado" in df_pendentes.columns:
     df_pendentes["Relatório Detalhado"] = df_pendentes[
         "Relatório Detalhado"
     ].apply(corrigir_relatorio)
-
 
 df_concluidas = df_total[
     ~df_total["Cidade"].isin(df_pendentes["Cidade"])
@@ -94,13 +91,10 @@ total = len(df_total)
 pendentes = len(df_pendentes)
 concluidas = len(df_concluidas)
 percentual = round((concluidas / total) * 100, 1) if total > 0 else 0
-percentual_pendente = round((pendentes / total) * 100, 1) if total > 0 else 0
 
 alta = len(df_pendentes[df_pendentes["Prioridade"] == "Alta"])
 media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
-ufs_pendentes = df_pendentes["UF"].nunique()
-
 
 logo_col, titulo_col = st.columns([1, 4])
 
@@ -112,7 +106,6 @@ with titulo_col:
     st.caption(
         "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado")
 
-
 aba_dashboard, aba_pendentes, aba_relatorio, aba_concluidas = st.tabs([
     "Dashboard",
     "Localidades Pendentes",
@@ -120,22 +113,17 @@ aba_dashboard, aba_pendentes, aba_relatorio, aba_concluidas = st.tabs([
     "Localidades Concluídas"
 ])
 
-
 with aba_dashboard:
     st.divider()
 
-    st.subheader("Painel de Pendências das Localidades")
-    st.caption(
-        "Resumo focado nas localidades que ainda precisam de acompanhamento.")
-
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("Localidades Pendentes", pendentes)
-    col2.metric("UFs com Pendência", ufs_pendentes)
-    col3.metric("Prioridade Alta", alta)
-    col4.metric("% Pendente do Total", f"{percentual_pendente}%")
+    col1.metric("Total de Localidades", total)
+    col2.metric("Localidades Concluídas", concluidas)
+    col3.metric("Localidades Pendentes", pendentes)
+    col4.metric("Percentual de Conclusão", f"{percentual}%")
 
-    st.divider()
+    st.progress(percentual / 100)
 
     col5, col6, col7 = st.columns(3)
 
@@ -148,6 +136,22 @@ with aba_dashboard:
     graf1, graf2 = st.columns(2)
 
     with graf1:
+        dados_status = pd.DataFrame({
+            "Status": ["Concluídas", "Pendentes"],
+            "Quantidade": [concluidas, pendentes]
+        })
+
+        fig_status = px.pie(
+            dados_status,
+            names="Status",
+            values="Quantidade",
+            hole=0.55,
+            title="Status Geral das Localidades"
+        )
+
+        st.plotly_chart(fig_status, use_container_width=True)
+
+    with graf2:
         uf_count = df_pendentes["UF"].value_counts().reset_index()
         uf_count.columns = ["UF", "Quantidade"]
 
@@ -161,24 +165,10 @@ with aba_dashboard:
 
         st.plotly_chart(fig_uf, use_container_width=True)
 
-    with graf2:
-        prioridade_count = df_pendentes["Prioridade"].value_counts(
-        ).reset_index()
-        prioridade_count.columns = ["Prioridade", "Quantidade"]
-
-        fig_prioridade = px.bar(
-            prioridade_count,
-            x="Prioridade",
-            y="Quantidade",
-            text_auto=True,
-            title="Pendências por Prioridade"
-        )
-
-        st.plotly_chart(fig_prioridade, use_container_width=True)
-
     st.divider()
 
     st.subheader("Resumo das Localidades Pendentes")
+    st.caption("Tabela resumida para acompanhamento rápido das pendências.")
 
     colunas_resumo = [
         col for col in [
@@ -196,7 +186,6 @@ with aba_dashboard:
         use_container_width=True,
         hide_index=True
     )
-
 
 with aba_pendentes:
     st.subheader("Filtros de Localidades Pendentes")
@@ -283,7 +272,6 @@ with aba_pendentes:
         st.success("Prioridade atualizada com sucesso.")
         st.rerun()
 
-
 with aba_relatorio:
     st.subheader("Relatório Detalhado das Localidades")
     st.caption("Situação atual de cada localidade pendente.")
@@ -350,7 +338,6 @@ with aba_relatorio:
                 st.markdown("**Situação:**")
                 st.write(relatorio)
 
-
 with aba_concluidas:
     st.subheader("Localidades Concluídas")
 
@@ -359,7 +346,6 @@ with aba_concluidas:
         use_container_width=True,
         hide_index=True
     )
-
 
 st.divider()
 st.subheader("Exportação de Relatórios")
