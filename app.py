@@ -61,6 +61,7 @@ except Exception as erro:
     st.write(erro)
     st.stop()
 
+
 df_total["Cidade"] = df_total["Cidade"].astype(str).str.strip()
 df_pendentes["Cidade"] = df_pendentes["Cidade"].astype(str).str.strip()
 df_pendentes["Prioridade"] = df_pendentes["Prioridade"].astype(str).str.strip()
@@ -76,10 +77,12 @@ for df in [df_total, df_pendentes]:
             df["Previsão"], errors="coerce"
         ).dt.strftime("%d/%m/%Y")
 
+
 if "Relatório Detalhado" in df_pendentes.columns:
     df_pendentes["Relatório Detalhado"] = df_pendentes[
         "Relatório Detalhado"
     ].apply(corrigir_relatorio)
+
 
 df_concluidas = df_total[
     ~df_total["Cidade"].isin(df_pendentes["Cidade"])
@@ -96,21 +99,41 @@ alta = len(df_pendentes[df_pendentes["Prioridade"] == "Alta"])
 media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
 
+
 logo_col, titulo_col = st.columns([1, 4])
 
 with logo_col:
+    st.markdown(
+        """
+        <div style="
+            background-color: #0E1117;
+            padding: 12px;
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: fit-content;
+        ">
+        """,
+        unsafe_allow_html=True
+    )
+
     st.image("logo_3am.png", width=180)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 with titulo_col:
     st.title("Projeto IBM")
     st.caption(
         "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado")
 
+
 aba_dashboard, aba_relatorio, aba_concluidas = st.tabs([
     "Dashboard",
     "Relatório Detalhado",
     "Localidades Concluídas"
 ])
+
 
 with aba_dashboard:
     st.divider()
@@ -248,6 +271,7 @@ with aba_dashboard:
         st.success("Prioridade atualizada com sucesso.")
         st.rerun()
 
+
 with aba_relatorio:
     st.subheader("Relatório Detalhado das Localidades")
     st.caption("Situação atual de cada localidade pendente.")
@@ -314,6 +338,7 @@ with aba_relatorio:
                 st.markdown("**Situação:**")
                 st.write(relatorio)
 
+
 with aba_concluidas:
     st.subheader("Localidades Concluídas")
 
@@ -322,6 +347,7 @@ with aba_concluidas:
         use_container_width=True,
         hide_index=True
     )
+
 
 st.divider()
 st.subheader("Exportação de Relatórios")
