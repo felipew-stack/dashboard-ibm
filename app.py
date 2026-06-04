@@ -6,11 +6,15 @@ import base64
 st.set_page_config(page_title="Dashboard IBM", layout="wide")
 
 ARQUIVO_EXCEL = "Report IBM 01-06 (1) (3).xlsx"
+ARQUIVO_LOGO = "logo_3am.png"
 
 
 def imagem_base64(caminho):
-    with open(caminho, "rb") as arquivo:
-        return base64.b64encode(arquivo.read()).decode()
+    try:
+        with open(caminho, "rb") as arquivo:
+            return base64.b64encode(arquivo.read()).decode()
+    except FileNotFoundError:
+        return None
 
 
 def salvar_excel(df_total, df_pendentes):
@@ -106,32 +110,57 @@ media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
 
 
-logo_col, titulo_col = st.columns([1, 4])
-
-with logo_col:
-    logo_base64 = imagem_base64("logo_3am.png")
-
-    st.markdown(
-        f"""
-        <div style="
-            background-color: #0E1117;
-            padding: 14px 18px;
-            border-radius: 14px;
+st.markdown(
+    """
+    <style>
+        .logo-box {
+            background-color: #FFFFFF;
+            padding: 14px 20px;
+            border-radius: 16px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            min-width: 210px;
-        ">
-            <img src="data:image/png;base64,{logo_base64}" style="width:180px;">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+            box-shadow: 0px 2px 10px rgba(0,0,0,0.12);
+            border: 1px solid rgba(0,0,0,0.08);
+        }
+
+        .logo-box img {
+            width: 230px;
+        }
+
+        .header-title {
+            padding-top: 12px;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+logo_col, titulo_col = st.columns([1.2, 4])
+
+with logo_col:
+    logo_base64 = imagem_base64(ARQUIVO_LOGO)
+
+    if logo_base64:
+        st.markdown(
+            f"""
+            <div class="logo-box">
+                <img src="data:image/png;base64,{logo_base64}">
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    else:
+        st.warning(f"Logo '{ARQUIVO_LOGO}' não encontrada.")
 
 with titulo_col:
+    st.markdown('<div class="header-title">', unsafe_allow_html=True)
     st.title("Projeto IBM")
     st.caption(
-        "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado")
+        "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 aba_dashboard, aba_relatorio, aba_concluidas = st.tabs([
@@ -174,7 +203,17 @@ with aba_dashboard:
             names="Status",
             values="Quantidade",
             hole=0.55,
-            title="Status Geral das Localidades"
+            title="Status Geral das Localidades",
+            color="Status",
+            color_discrete_map={
+                "Concluídas": "#00A6D6",
+                "Pendentes": "#003B71"
+            }
+        )
+
+        fig_status.update_traces(
+            textposition="inside",
+            textinfo="percent+label"
         )
 
         st.plotly_chart(fig_status, use_container_width=True)
@@ -188,7 +227,15 @@ with aba_dashboard:
             x="UF",
             y="Quantidade",
             text_auto=True,
-            title="Pendências por Estado"
+            title="Pendências por Estado",
+            color="Quantidade",
+            color_continuous_scale="Blues"
+        )
+
+        fig_uf.update_layout(
+            xaxis_title="Estado",
+            yaxis_title="Quantidade de Pendências",
+            showlegend=False
         )
 
         st.plotly_chart(fig_uf, use_container_width=True)
@@ -197,7 +244,8 @@ with aba_dashboard:
 
     st.subheader("Resumo das Localidades Pendentes")
     st.caption(
-        "Consulte, filtre e altere a prioridade das localidades pendentes diretamente pelo Dashboard.")
+        "Consulte, filtre e altere a prioridade das localidades pendentes diretamente pelo Dashboard."
+    )
 
     filtro1, filtro2, filtro3 = st.columns(3)
 
