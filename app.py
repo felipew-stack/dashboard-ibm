@@ -238,8 +238,6 @@ df_concluidas = df_total[
     ~df_total["Cidade"].isin(df_pendentes["Cidade"])
 ]
 
-df_relatorio = df_pendentes.copy()
-
 total = len(df_total)
 pendentes = len(df_pendentes)
 concluidas = len(df_concluidas)
@@ -471,7 +469,7 @@ with aba_dashboard:
 with aba_relatorio:
     st.subheader("Relatório Detalhado das Localidades")
     st.caption(
-        "Consulte, filtre e edite o texto do relatório detalhado diretamente pelo Dashboard."
+        "Consulte, filtre e edite o texto do relatório detalhado diretamente pelos cards."
     )
 
     if "Relatório Detalhado" not in df_pendentes.columns:
@@ -503,21 +501,6 @@ with aba_relatorio:
         tabela_relatorio = df_pendentes.copy()
         tabela_relatorio["__linha_original"] = tabela_relatorio.index
 
-        colunas_relatorio = [
-            col for col in [
-                "UF",
-                "Cidade",
-                "Data da Solicitação",
-                "Previsão",
-                "Prioridade",
-                "Relatório Detalhado",
-                "__linha_original"
-            ]
-            if col in tabela_relatorio.columns
-        ]
-
-        tabela_relatorio = tabela_relatorio[colunas_relatorio]
-
         if busca_relatorio:
             tabela_relatorio = tabela_relatorio[
                 tabela_relatorio["Cidade"].astype(str).str.contains(
@@ -539,36 +522,46 @@ with aba_relatorio:
 
         st.write(f"Total filtrado: {len(tabela_relatorio)} localidade(s)")
 
-        tabela_relatorio_editada = st.data_editor(
-            tabela_relatorio,
-            use_container_width=True,
-            hide_index=True,
-            key="editor_relatorio_detalhado",
-            disabled=[
-                col for col in tabela_relatorio.columns
-                if col not in ["Relatório Detalhado"]
-            ],
-            column_config={
-                "Relatório Detalhado": st.column_config.TextColumn(
-                    "Relatório Detalhado",
-                    width="large",
-                    required=False
-                ),
-                "__linha_original": None
-            }
-        )
+        relatorios_editados = {}
+
+        for _, linha in tabela_relatorio.iterrows():
+            indice_original = int(linha["__linha_original"])
+            cidade = linha.get("Cidade", "")
+            uf = linha.get("UF", "")
+            prioridade = linha.get("Prioridade", "")
+            data = linha.get("Data da Solicitação", "")
+            previsao = linha.get("Previsão", "")
+            relatorio = linha.get("Relatório Detalhado", "")
+
+            if pd.isna(previsao) or previsao == "None" or previsao == "NaT":
+                previsao = "-"
+
+            if pd.isna(relatorio):
+                relatorio = ""
+
+            with st.container(border=True):
+                st.markdown(f"### {cidade} - {uf}")
+                st.markdown(f"**Prioridade:** {prioridade}")
+                st.markdown(f"**Data da Solicitação:** {data}")
+                st.markdown(f"**Previsão:** {previsao}")
+                st.markdown("**Situação:**")
+
+                novo_relatorio = st.text_area(
+                    label="Editar relatório",
+                    value=str(relatorio),
+                    key=f"relatorio_editavel_{indice_original}",
+                    height=120,
+                    label_visibility="collapsed"
+                )
+
+                relatorios_editados[indice_original] = novo_relatorio
 
         if st.button("Salvar alterações do relatório"):
-            for _, linha in tabela_relatorio_editada.iterrows():
-                indice_original = int(linha["__linha_original"])
-                novo_relatorio = str(
-                    linha["Relatório Detalhado"]
-                ).strip()
-
+            for indice_original, novo_relatorio in relatorios_editados.items():
                 df_pendentes.loc[
                     indice_original,
                     "Relatório Detalhado"
-                ] = novo_relatorio
+                ] = str(novo_relatorio).strip()
 
             salvar_excel(df_total, df_pendentes)
 
