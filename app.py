@@ -29,7 +29,10 @@ def salvar_excel(df_total, df_pendentes):
     ) as writer:
         df_total.to_excel(writer, sheet_name="Localidades Total", index=False)
         df_pendentes.to_excel(
-            writer, sheet_name="Localidades Pendentes", index=False)
+            writer,
+            sheet_name="Localidades Pendentes",
+            index=False
+        )
 
 
 def corrigir_relatorio(texto):
@@ -93,7 +96,6 @@ def gerar_excel_relatorio(df):
         worksheet = writer.sheets["Relatório Detalhado"]
 
         azul_escuro = "003B71"
-        azul_claro = "00A6D6"
         branco = "FFFFFF"
         cinza_claro = "F2F6FA"
         vermelho = "F8D7DA"
@@ -196,7 +198,9 @@ def gerar_excel_relatorio(df):
 try:
     df_total = pd.read_excel(ARQUIVO_EXCEL, sheet_name="Localidades Total")
     df_pendentes = pd.read_excel(
-        ARQUIVO_EXCEL, sheet_name="Localidades Pendentes")
+        ARQUIVO_EXCEL,
+        sheet_name="Localidades Pendentes"
+    )
 except FileNotFoundError:
     st.error(f"Arquivo '{ARQUIVO_EXCEL}' não encontrado.")
     st.stop()
@@ -213,12 +217,14 @@ df_pendentes["Prioridade"] = df_pendentes["Prioridade"].astype(str).str.strip()
 for df in [df_total, df_pendentes]:
     if "Data da Solicitação" in df.columns:
         df["Data da Solicitação"] = pd.to_datetime(
-            df["Data da Solicitação"], errors="coerce"
+            df["Data da Solicitação"],
+            errors="coerce"
         ).dt.strftime("%d/%m/%Y")
 
     if "Previsão" in df.columns:
         df["Previsão"] = pd.to_datetime(
-            df["Previsão"], errors="coerce"
+            df["Previsão"],
+            errors="coerce"
         ).dt.strftime("%d/%m/%Y")
 
 
@@ -445,14 +451,16 @@ with aba_dashboard:
         }
     )
 
-    if st.button("Salvar alterações"):
+    if st.button("Salvar alterações de prioridade"):
         for _, linha in tabela_editada.iterrows():
             indice_original = int(linha["__linha_original"])
             nova_prioridade = str(linha["Prioridade"]).strip()
 
             if nova_prioridade in ["Alta", "Média", "Baixa"]:
-                df_pendentes.loc[indice_original,
-                                 "Prioridade"] = nova_prioridade
+                df_pendentes.loc[
+                    indice_original,
+                    "Prioridade"
+                ] = nova_prioridade
 
         salvar_excel(df_total, df_pendentes)
 
@@ -462,23 +470,28 @@ with aba_dashboard:
 
 with aba_relatorio:
     st.subheader("Relatório Detalhado das Localidades")
-    st.caption("Situação atual de cada localidade pendente.")
+    st.caption(
+        "Consulte, filtre e edite o texto do relatório detalhado diretamente pelo Dashboard."
+    )
 
-    if "Relatório Detalhado" not in df_relatorio.columns:
+    if "Relatório Detalhado" not in df_pendentes.columns:
         st.warning(
-            "A coluna 'Relatório Detalhado' não foi encontrada na planilha.")
+            "A coluna 'Relatório Detalhado' não foi encontrada na planilha."
+        )
     else:
         col_rel1, col_rel2, col_rel3 = st.columns(3)
 
         with col_rel1:
             busca_relatorio = st.text_input(
-                "Pesquisar localidade no relatório")
+                "Pesquisar localidade no relatório"
+            )
 
         with col_rel2:
             uf_relatorio = st.selectbox(
                 "Filtrar UF no relatório",
-                ["Todas"] +
-                sorted(df_relatorio["UF"].dropna().unique().tolist())
+                ["Todas"] + sorted(
+                    df_pendentes["UF"].dropna().unique().tolist()
+                )
             )
 
         with col_rel3:
@@ -487,7 +500,23 @@ with aba_relatorio:
                 ["Todas", "Alta", "Média", "Baixa"]
             )
 
-        tabela_relatorio = df_relatorio.copy()
+        tabela_relatorio = df_pendentes.copy()
+        tabela_relatorio["__linha_original"] = tabela_relatorio.index
+
+        colunas_relatorio = [
+            col for col in [
+                "UF",
+                "Cidade",
+                "Data da Solicitação",
+                "Previsão",
+                "Prioridade",
+                "Relatório Detalhado",
+                "__linha_original"
+            ]
+            if col in tabela_relatorio.columns
+        ]
+
+        tabela_relatorio = tabela_relatorio[colunas_relatorio]
 
         if busca_relatorio:
             tabela_relatorio = tabela_relatorio[
@@ -510,21 +539,41 @@ with aba_relatorio:
 
         st.write(f"Total filtrado: {len(tabela_relatorio)} localidade(s)")
 
-        for _, linha in tabela_relatorio.iterrows():
-            cidade = linha.get("Cidade", "")
-            uf = linha.get("UF", "")
-            prioridade = linha.get("Prioridade", "")
-            data = linha.get("Data da Solicitação", "")
-            previsao = linha.get("Previsão", "")
-            relatorio = linha.get("Relatório Detalhado", "")
+        tabela_relatorio_editada = st.data_editor(
+            tabela_relatorio,
+            use_container_width=True,
+            hide_index=True,
+            key="editor_relatorio_detalhado",
+            disabled=[
+                col for col in tabela_relatorio.columns
+                if col not in ["Relatório Detalhado"]
+            ],
+            column_config={
+                "Relatório Detalhado": st.column_config.TextColumn(
+                    "Relatório Detalhado",
+                    width="large",
+                    required=False
+                ),
+                "__linha_original": None
+            }
+        )
 
-            with st.container(border=True):
-                st.markdown(f"### {cidade} - {uf}")
-                st.markdown(f"**Prioridade:** {prioridade}")
-                st.markdown(f"**Data da Solicitação:** {data}")
-                st.markdown(f"**Previsão:** {previsao}")
-                st.markdown("**Situação:**")
-                st.write(relatorio)
+        if st.button("Salvar alterações do relatório"):
+            for _, linha in tabela_relatorio_editada.iterrows():
+                indice_original = int(linha["__linha_original"])
+                novo_relatorio = str(
+                    linha["Relatório Detalhado"]
+                ).strip()
+
+                df_pendentes.loc[
+                    indice_original,
+                    "Relatório Detalhado"
+                ] = novo_relatorio
+
+            salvar_excel(df_total, df_pendentes)
+
+            st.success("Relatório detalhado atualizado com sucesso.")
+            st.rerun()
 
 
 with aba_concluidas:
@@ -561,7 +610,7 @@ with col_down2:
 with col_down3:
     st.download_button(
         label="Baixar relatório detalhado em Excel",
-        data=gerar_excel_relatorio(df_relatorio),
+        data=gerar_excel_relatorio(df_pendentes),
         file_name="relatorio_detalhado.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
