@@ -106,9 +106,8 @@ with titulo_col:
     st.caption(
         "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado")
 
-aba_dashboard, aba_pendentes, aba_relatorio, aba_concluidas = st.tabs([
+aba_dashboard, aba_relatorio, aba_concluidas = st.tabs([
     "Dashboard",
-    "Localidades Pendentes",
     "Relatório Detalhado",
     "Localidades Concluídas"
 ])
@@ -168,27 +167,8 @@ with aba_dashboard:
     st.divider()
 
     st.subheader("Resumo das Localidades Pendentes")
-    st.caption("Tabela resumida para acompanhamento rápido das pendências.")
-
-    colunas_resumo = [
-        col for col in [
-            "UF",
-            "Cidade",
-            "Data da Solicitação",
-            "Previsão",
-            "Prioridade"
-        ]
-        if col in df_pendentes.columns
-    ]
-
-    st.dataframe(
-        df_pendentes[colunas_resumo],
-        use_container_width=True,
-        hide_index=True
-    )
-
-with aba_pendentes:
-    st.subheader("Filtros de Localidades Pendentes")
+    st.caption(
+        "Consulte, filtre e altere a prioridade das localidades pendentes diretamente pelo Dashboard.")
 
     filtro1, filtro2, filtro3 = st.columns(3)
 
@@ -235,15 +215,11 @@ with aba_pendentes:
     if uf != "Todas":
         tabela = tabela[tabela["UF"] == uf]
 
-    st.subheader("Gestão de Prioridades")
-    st.caption(
-        "Na coluna Prioridade, clique duas vezes na célula e escolha Alta, Média ou Baixa.")
-
     tabela_editada = st.data_editor(
         tabela,
         use_container_width=True,
         hide_index=True,
-        key="editor_prioridade",
+        key="editor_prioridade_dashboard",
         disabled=[
             col for col in tabela.columns
             if col not in ["Prioridade"]
