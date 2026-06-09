@@ -325,9 +325,10 @@ with titulo_col:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-aba_dashboard, aba_relatorio, aba_concluidas = st.tabs([
+aba_dashboard, aba_relatorio, aba_total, aba_concluidas = st.tabs([
     "Dashboard",
     "Relatório Detalhado",
+    "Localidades Total",
     "Localidades Concluídas"
 ])
 
@@ -768,6 +769,19 @@ with aba_relatorio:
 
             st.success("Relatório detalhado atualizado com sucesso.")
             st.rerun()
+
+
+with aba_total:
+    st.subheader("Localidades Total")
+    st.caption(
+        "Lista com todas as localidades abertas, incluindo pendentes e concluídas."
+    )
+
+    st.dataframe(
+        df_total,
+        use_container_width=True,
+        hide_index=True
+    )
 
 
 with aba_concluidas:
