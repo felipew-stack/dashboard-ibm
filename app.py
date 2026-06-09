@@ -67,7 +67,6 @@ def corrigir_relatorio(texto):
 
 def gerar_excel_relatorio(df):
     output = BytesIO()
-
     df_export = df.copy()
 
     colunas_preferidas = [
@@ -254,13 +253,27 @@ if "Relatório Detalhado" in df_pendentes.columns:
     ].apply(corrigir_relatorio)
 
 
-df_concluidas = df_total[
-    ~(
-        df_total["Cidade"].astype(str).str.upper().isin(
-            df_pendentes["Cidade"].astype(str).str.upper()
-        )
-    )
-]
+df_total_chave = df_total.copy()
+df_pendentes_chave = df_pendentes.copy()
+
+df_total_chave["__chave"] = (
+    df_total_chave["UF"].astype(str).str.upper().str.strip()
+    + "|"
+    + df_total_chave["Cidade"].astype(str).str.upper().str.strip()
+)
+
+df_pendentes_chave["__chave"] = (
+    df_pendentes_chave["UF"].astype(str).str.upper().str.strip()
+    + "|"
+    + df_pendentes_chave["Cidade"].astype(str).str.upper().str.strip()
+)
+
+chaves_pendentes = set(df_pendentes_chave["__chave"])
+
+df_concluidas = df_total_chave[
+    ~df_total_chave["__chave"].isin(chaves_pendentes)
+].drop(columns=["__chave"])
+
 
 total = len(df_total)
 pendentes = len(df_pendentes)
@@ -270,6 +283,13 @@ percentual = round((concluidas / total) * 100, 1) if total > 0 else 0
 alta = len(df_pendentes[df_pendentes["Prioridade"] == "Alta"])
 media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
+
+
+if "pagina_atual" not in st.session_state:
+    st.session_state["pagina_atual"] = "Dashboard"
+
+if "cidade_relatorio" not in st.session_state:
+    st.session_state["cidade_relatorio"] = ""
 
 
 st.markdown(
@@ -325,15 +345,25 @@ with titulo_col:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-aba_dashboard, aba_relatorio, aba_total, aba_concluidas = st.tabs([
+opcoes_paginas = [
     "Dashboard",
     "Relatório Detalhado",
     "Localidades Total",
     "Localidades Concluídas"
-])
+]
+
+pagina = st.radio(
+    "Navegação",
+    opcoes_paginas,
+    horizontal=True,
+    index=opcoes_paginas.index(st.session_state["pagina_atual"]),
+    label_visibility="collapsed"
+)
+
+st.session_state["pagina_atual"] = pagina
 
 
-with aba_dashboard:
+if pagina == "Dashboard":
     st.divider()
 
     col1, col2, col3, col4 = st.columns(4)
@@ -495,6 +525,43 @@ with aba_dashboard:
 
     st.divider()
 
+    st.subheader("Explorar Pendências por Estado")
+    st.caption(
+        "Selecione um estado para ver as localidades pendentes. Ao clicar em uma localidade, o relatório detalhado será aberto filtrado nela."
+    )
+
+    if df_pendentes.empty:
+        st.info("Não há localidades pendentes para explorar.")
+    else:
+        uf_explorar = st.selectbox(
+            "Selecione um estado",
+            sorted(df_pendentes["UF"].dropna().unique().tolist())
+        )
+
+        pendencias_uf = df_pendentes[
+            df_pendentes["UF"] == uf_explorar
+        ].copy()
+
+        st.write(
+            f"Localidades pendentes em {uf_explorar}: {len(pendencias_uf)}")
+
+        colunas_botoes = st.columns(3)
+
+        for posicao, (_, linha) in enumerate(pendencias_uf.iterrows()):
+            cidade = str(linha.get("Cidade", "")).strip()
+            prioridade_linha = str(linha.get("Prioridade", "")).strip()
+
+            with colunas_botoes[posicao % 3]:
+                if st.button(
+                    f"📍 {cidade} | {prioridade_linha}",
+                    key=f"abrir_relatorio_{uf_explorar}_{cidade}_{posicao}"
+                ):
+                    st.session_state["cidade_relatorio"] = cidade
+                    st.session_state["pagina_atual"] = "Relatório Detalhado"
+                    st.rerun()
+
+    st.divider()
+
     st.subheader("Resumo das Localidades Pendentes")
     st.caption(
         "Consulte, filtre, altere a prioridade e marque localidades como concluídas diretamente pelo Dashboard."
@@ -598,7 +665,7 @@ with aba_dashboard:
         st.rerun()
 
 
-with aba_relatorio:
+elif pagina == "Relatório Detalhado":
     st.subheader("Relatório Detalhado das Localidades")
     st.caption(
         "Consulte, filtre e edite o texto do relatório detalhado diretamente pelos cards."
@@ -613,7 +680,8 @@ with aba_relatorio:
 
         with col_rel1:
             busca_relatorio = st.text_input(
-                "Pesquisar localidade no relatório"
+                "Pesquisar localidade no relatório",
+                value=st.session_state.get("cidade_relatorio", "")
             )
 
         with col_rel2:
@@ -629,6 +697,10 @@ with aba_relatorio:
                 "Filtrar prioridade no relatório",
                 ["Todas", "Alta", "Média", "Baixa"]
             )
+
+        if st.button("Limpar filtro do relatório"):
+            st.session_state["cidade_relatorio"] = ""
+            st.rerun()
 
         tabela_relatorio = df_pendentes.copy()
         tabela_relatorio["__linha_original"] = tabela_relatorio.index
@@ -701,7 +773,7 @@ with aba_relatorio:
             st.rerun()
 
 
-with aba_total:
+elif pagina == "Localidades Total":
     st.subheader("Localidades Total")
     st.caption(
         "Lista com todas as localidades abertas. Marque uma localidade como Excluir apenas se ela foi cadastrada por engano."
@@ -815,7 +887,7 @@ with aba_total:
                 st.rerun()
 
 
-with aba_concluidas:
+elif pagina == "Localidades Concluídas":
     st.subheader("Localidades Concluídas")
     st.caption(
         "As localidades aparecem aqui automaticamente quando são removidas da lista de pendentes."
