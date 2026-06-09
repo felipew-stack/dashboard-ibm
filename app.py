@@ -285,13 +285,6 @@ media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
 
 
-if "pagina_atual" not in st.session_state:
-    st.session_state["pagina_atual"] = "Dashboard"
-
-if "cidade_relatorio" not in st.session_state:
-    st.session_state["cidade_relatorio"] = ""
-
-
 st.markdown(
     """
     <style>
@@ -345,25 +338,15 @@ with titulo_col:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-opcoes_paginas = [
+aba_dashboard, aba_relatorio, aba_total, aba_concluidas = st.tabs([
     "Dashboard",
     "Relatório Detalhado",
     "Localidades Total",
     "Localidades Concluídas"
-]
-
-pagina = st.radio(
-    "Navegação",
-    opcoes_paginas,
-    horizontal=True,
-    index=opcoes_paginas.index(st.session_state["pagina_atual"]),
-    label_visibility="collapsed"
-)
-
-st.session_state["pagina_atual"] = pagina
+])
 
 
-if pagina == "Dashboard":
+with aba_dashboard:
     st.divider()
 
     col1, col2, col3, col4 = st.columns(4)
@@ -525,40 +508,72 @@ if pagina == "Dashboard":
 
     st.divider()
 
-    st.subheader("Explorar Pendências por Estado")
+    st.subheader("Localidades por Estado")
     st.caption(
-        "Selecione um estado para ver as localidades pendentes. Ao clicar em uma localidade, o relatório detalhado será aberto filtrado nela."
+        "Clique em um estado para listar as localidades pendentes. Depois clique na localidade para ver o relatório detalhado ali mesmo."
     )
 
+    if "uf_expandida" not in st.session_state:
+        st.session_state["uf_expandida"] = None
+
     if df_pendentes.empty:
-        st.info("Não há localidades pendentes para explorar.")
+        st.info("Não há localidades pendentes para exibir.")
     else:
-        uf_explorar = st.selectbox(
-            "Selecione um estado",
-            sorted(df_pendentes["UF"].dropna().unique().tolist())
-        )
+        total_colunas_uf = min(5, len(uf_count)) if len(uf_count) > 0 else 1
+        colunas_uf = st.columns(total_colunas_uf)
 
-        pendencias_uf = df_pendentes[
-            df_pendentes["UF"] == uf_explorar
-        ].copy()
+        for posicao, (_, linha_uf) in enumerate(uf_count.iterrows()):
+            uf_atual = str(linha_uf["UF"]).strip()
+            quantidade_uf = int(linha_uf["Quantidade"])
 
-        st.write(
-            f"Localidades pendentes em {uf_explorar}: {len(pendencias_uf)}")
-
-        colunas_botoes = st.columns(3)
-
-        for posicao, (_, linha) in enumerate(pendencias_uf.iterrows()):
-            cidade = str(linha.get("Cidade", "")).strip()
-            prioridade_linha = str(linha.get("Prioridade", "")).strip()
-
-            with colunas_botoes[posicao % 3]:
+            with colunas_uf[posicao % total_colunas_uf]:
                 if st.button(
-                    f"📍 {cidade} | {prioridade_linha}",
-                    key=f"abrir_relatorio_{uf_explorar}_{cidade}_{posicao}"
+                    f"{uf_atual} ({quantidade_uf})",
+                    key=f"botao_uf_{uf_atual}"
                 ):
-                    st.session_state["cidade_relatorio"] = cidade
-                    st.session_state["pagina_atual"] = "Relatório Detalhado"
-                    st.rerun()
+                    if st.session_state["uf_expandida"] == uf_atual:
+                        st.session_state["uf_expandida"] = None
+                    else:
+                        st.session_state["uf_expandida"] = uf_atual
+
+        if st.session_state["uf_expandida"]:
+            uf_selecionada = st.session_state["uf_expandida"]
+
+            localidades_estado = df_pendentes[
+                df_pendentes["UF"] == uf_selecionada
+            ].copy()
+
+            st.markdown(f"### Localidades Pendentes - {uf_selecionada}")
+
+            for _, linha_localidade in localidades_estado.iterrows():
+                cidade = str(linha_localidade.get("Cidade", "")).strip()
+                prioridade_localidade = str(
+                    linha_localidade.get("Prioridade", "")
+                ).strip()
+                data_solicitacao = linha_localidade.get(
+                    "Data da Solicitação",
+                    "-"
+                )
+                previsao = linha_localidade.get("Previsão", "-")
+                relatorio = linha_localidade.get("Relatório Detalhado", "")
+
+                if pd.isna(previsao) or previsao == "None" or previsao == "NaT":
+                    previsao = "-"
+
+                if pd.isna(relatorio):
+                    relatorio = ""
+
+                with st.expander(
+                    f"📍 {cidade} | Prioridade: {prioridade_localidade}",
+                    expanded=False
+                ):
+                    st.markdown(f"**UF:** {uf_selecionada}")
+                    st.markdown(f"**Cidade:** {cidade}")
+                    st.markdown(f"**Prioridade:** {prioridade_localidade}")
+                    st.markdown(f"**Data da Solicitação:** {data_solicitacao}")
+                    st.markdown(f"**Previsão:** {previsao}")
+                    st.markdown("**Relatório Detalhado:**")
+                    st.write(str(relatorio))
 
     st.divider()
 
@@ -663,9 +678,7 @@ if pagina == "Dashboard":
 
         st.success("Alterações salvas com sucesso.")
         st.rerun()
-
-
-elif pagina == "Relatório Detalhado":
+with aba_relatorio:
     st.subheader("Relatório Detalhado das Localidades")
     st.caption(
         "Consulte, filtre e edite o texto do relatório detalhado diretamente pelos cards."
@@ -680,8 +693,7 @@ elif pagina == "Relatório Detalhado":
 
         with col_rel1:
             busca_relatorio = st.text_input(
-                "Pesquisar localidade no relatório",
-                value=st.session_state.get("cidade_relatorio", "")
+                "Pesquisar localidade no relatório"
             )
 
         with col_rel2:
@@ -697,10 +709,6 @@ elif pagina == "Relatório Detalhado":
                 "Filtrar prioridade no relatório",
                 ["Todas", "Alta", "Média", "Baixa"]
             )
-
-        if st.button("Limpar filtro do relatório"):
-            st.session_state["cidade_relatorio"] = ""
-            st.rerun()
 
         tabela_relatorio = df_pendentes.copy()
         tabela_relatorio["__linha_original"] = tabela_relatorio.index
@@ -773,7 +781,7 @@ elif pagina == "Relatório Detalhado":
             st.rerun()
 
 
-elif pagina == "Localidades Total":
+with aba_total:
     st.subheader("Localidades Total")
     st.caption(
         "Lista com todas as localidades abertas. Marque uma localidade como Excluir apenas se ela foi cadastrada por engano."
@@ -887,7 +895,7 @@ elif pagina == "Localidades Total":
                 st.rerun()
 
 
-elif pagina == "Localidades Concluídas":
+with aba_concluidas:
     st.subheader("Localidades Concluídas")
     st.caption(
         "As localidades aparecem aqui automaticamente quando são removidas da lista de pendentes."
