@@ -353,9 +353,9 @@ with aba_dashboard:
 
     st.divider()
 
-    st.subheader("Gerenciar Localidades")
+    st.subheader("Adicionar Nova Localidade")
     st.caption(
-        "Adicione novas localidades, marque pendências como concluídas ou exclua cadastros feitos por engano."
+        "Cadastre uma nova localidade. Ela será adicionada em Localidades Total e também em Localidades Pendentes."
     )
 
     with st.expander("Adicionar nova localidade", expanded=False):
@@ -441,93 +441,6 @@ with aba_dashboard:
                     st.success("Localidade adicionada com sucesso.")
                     st.rerun()
 
-    with st.expander("Marcar localidade como concluída", expanded=False):
-        if df_pendentes.empty:
-            st.info("Não há localidades pendentes para concluir.")
-        else:
-            df_pendentes_opcoes = df_pendentes.copy()
-            df_pendentes_opcoes["Opção"] = (
-                df_pendentes_opcoes["Cidade"].astype(str)
-                + " - "
-                + df_pendentes_opcoes["UF"].astype(str)
-                + " | Prioridade: "
-                + df_pendentes_opcoes["Prioridade"].astype(str)
-            )
-
-            opcoes_concluir = df_pendentes_opcoes["Opção"].tolist()
-
-            localidade_concluir = st.selectbox(
-                "Selecione a localidade pendente",
-                opcoes_concluir
-            )
-
-            if st.button("Marcar como Concluída"):
-                indice = df_pendentes_opcoes[
-                    df_pendentes_opcoes["Opção"] == localidade_concluir
-                ].index[0]
-
-                df_pendentes = df_pendentes.drop(
-                    index=indice).reset_index(drop=True)
-
-                salvar_excel(df_total, df_pendentes)
-
-                st.success("Localidade marcada como concluída.")
-                st.rerun()
-
-    with st.expander("Excluir localidade cadastrada por engano", expanded=False):
-        if df_total.empty:
-            st.info("Não há localidades cadastradas para excluir.")
-        else:
-            df_total_opcoes = df_total.copy()
-            df_total_opcoes["Opção"] = (
-                df_total_opcoes["Cidade"].astype(str)
-                + " - "
-                + df_total_opcoes["UF"].astype(str)
-            )
-
-            opcoes_excluir = df_total_opcoes["Opção"].tolist()
-
-            localidade_excluir = st.selectbox(
-                "Selecione a localidade para excluir definitivamente",
-                opcoes_excluir
-            )
-
-            confirmar_exclusao = st.checkbox(
-                "Confirmo que desejo excluir essa localidade do Total e dos Pendentes"
-            )
-
-            if st.button("Excluir Localidade"):
-                if not confirmar_exclusao:
-                    st.warning("Marque a confirmação antes de excluir.")
-                else:
-                    linha_excluir = df_total_opcoes[
-                        df_total_opcoes["Opção"] == localidade_excluir
-                    ].iloc[0]
-
-                    cidade_excluir = str(linha_excluir["Cidade"]).upper()
-                    uf_excluir = str(linha_excluir["UF"]).upper()
-
-                    df_total = df_total[
-                        ~(
-                            (df_total["Cidade"].astype(str).str.upper() == cidade_excluir) &
-                            (df_total["UF"].astype(
-                                str).str.upper() == uf_excluir)
-                        )
-                    ].reset_index(drop=True)
-
-                    df_pendentes = df_pendentes[
-                        ~(
-                            (df_pendentes["Cidade"].astype(str).str.upper() == cidade_excluir) &
-                            (df_pendentes["UF"].astype(
-                                str).str.upper() == uf_excluir)
-                        )
-                    ].reset_index(drop=True)
-
-                    salvar_excel(df_total, df_pendentes)
-
-                    st.success("Localidade excluída com sucesso.")
-                    st.rerun()
-
     st.divider()
 
     graf1, graf2 = st.columns(2)
@@ -584,7 +497,7 @@ with aba_dashboard:
 
     st.subheader("Resumo das Localidades Pendentes")
     st.caption(
-        "Consulte, filtre e altere a prioridade das localidades pendentes diretamente pelo Dashboard."
+        "Consulte, filtre, altere a prioridade e marque localidades como concluídas diretamente pelo Dashboard."
     )
 
     filtro1, filtro2, filtro3 = st.columns(3)
@@ -606,6 +519,7 @@ with aba_dashboard:
 
     tabela = df_pendentes.copy()
     tabela["__linha_original"] = tabela.index
+    tabela["Concluir"] = False
 
     colunas_editor = [
         col for col in [
@@ -614,6 +528,7 @@ with aba_dashboard:
             "Data da Solicitação",
             "Previsão",
             "Prioridade",
+            "Concluir",
             "__linha_original"
         ]
         if col in tabela.columns
@@ -636,10 +551,10 @@ with aba_dashboard:
         tabela,
         use_container_width=True,
         hide_index=True,
-        key="editor_prioridade_dashboard",
+        key="editor_pendentes_dashboard",
         disabled=[
             col for col in tabela.columns
-            if col not in ["Prioridade"]
+            if col not in ["Prioridade", "Concluir"]
         ],
         column_config={
             "Prioridade": st.column_config.SelectboxColumn(
@@ -647,11 +562,18 @@ with aba_dashboard:
                 options=["Alta", "Média", "Baixa"],
                 required=True
             ),
+            "Concluir": st.column_config.CheckboxColumn(
+                "Concluir",
+                help="Marque para concluir a localidade",
+                default=False
+            ),
             "__linha_original": None
         }
     )
 
-    if st.button("Salvar alterações de prioridade"):
+    if st.button("Salvar alterações de pendentes"):
+        indices_concluir = []
+
         for _, linha in tabela_editada.iterrows():
             indice_original = int(linha["__linha_original"])
             nova_prioridade = str(linha["Prioridade"]).strip()
@@ -662,9 +584,17 @@ with aba_dashboard:
                     "Prioridade"
                 ] = nova_prioridade
 
+            if bool(linha["Concluir"]):
+                indices_concluir.append(indice_original)
+
+        if indices_concluir:
+            df_pendentes = df_pendentes.drop(
+                index=indices_concluir
+            ).reset_index(drop=True)
+
         salvar_excel(df_total, df_pendentes)
 
-        st.success("Prioridade atualizada com sucesso.")
+        st.success("Alterações salvas com sucesso.")
         st.rerun()
 
 
@@ -774,18 +704,122 @@ with aba_relatorio:
 with aba_total:
     st.subheader("Localidades Total")
     st.caption(
-        "Lista com todas as localidades abertas, incluindo pendentes e concluídas."
+        "Lista com todas as localidades abertas. Marque uma localidade como Excluir apenas se ela foi cadastrada por engano."
     )
 
-    st.dataframe(
-        df_total,
+    filtro_total1, filtro_total2 = st.columns(2)
+
+    with filtro_total1:
+        busca_total = st.text_input("Pesquisar cidade no total")
+
+    with filtro_total2:
+        uf_total = st.selectbox(
+            "Filtrar UF no total",
+            ["Todas"] + sorted(df_total["UF"].dropna().unique().tolist())
+        )
+
+    tabela_total = df_total.copy()
+    tabela_total["__linha_original"] = tabela_total.index
+    tabela_total["Excluir"] = False
+
+    colunas_total_editor = [
+        col for col in [
+            "UF",
+            "Cidade",
+            "Data da Solicitação",
+            "Previsão",
+            "Prioridade",
+            "Relatório Detalhado",
+            "Excluir",
+            "__linha_original"
+        ]
+        if col in tabela_total.columns
+    ]
+
+    tabela_total = tabela_total[colunas_total_editor]
+
+    if busca_total:
+        tabela_total = tabela_total[
+            tabela_total["Cidade"].astype(str).str.contains(
+                busca_total,
+                case=False,
+                na=False
+            )
+        ]
+
+    if uf_total != "Todas":
+        tabela_total = tabela_total[tabela_total["UF"] == uf_total]
+
+    tabela_total_editada = st.data_editor(
+        tabela_total,
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        key="editor_localidades_total",
+        disabled=[
+            col for col in tabela_total.columns
+            if col not in ["Excluir"]
+        ],
+        column_config={
+            "Excluir": st.column_config.CheckboxColumn(
+                "Excluir",
+                help="Marque somente se a localidade foi cadastrada por engano",
+                default=False
+            ),
+            "__linha_original": None
+        }
     )
+
+    confirmar_exclusao_total = st.checkbox(
+        "Confirmo que desejo excluir as localidades marcadas do Total e dos Pendentes"
+    )
+
+    if st.button("Excluir localidades marcadas"):
+        if not confirmar_exclusao_total:
+            st.warning("Marque a confirmação antes de excluir.")
+        else:
+            linhas_para_excluir = tabela_total_editada[
+                tabela_total_editada["Excluir"] == True
+            ]
+
+            if linhas_para_excluir.empty:
+                st.warning("Nenhuma localidade foi marcada para exclusão.")
+            else:
+                indices_total_excluir = linhas_para_excluir[
+                    "__linha_original"
+                ].astype(int).tolist()
+
+                localidades_excluir = df_total.loc[
+                    indices_total_excluir,
+                    ["UF", "Cidade"]
+                ].copy()
+
+                df_total = df_total.drop(
+                    index=indices_total_excluir
+                ).reset_index(drop=True)
+
+                for _, localidade in localidades_excluir.iterrows():
+                    uf_excluir = str(localidade["UF"]).upper().strip()
+                    cidade_excluir = str(localidade["Cidade"]).upper().strip()
+
+                    df_pendentes = df_pendentes[
+                        ~(
+                            (df_pendentes["UF"].astype(str).str.upper().str.strip() == uf_excluir) &
+                            (df_pendentes["Cidade"].astype(
+                                str).str.upper().str.strip() == cidade_excluir)
+                        )
+                    ].reset_index(drop=True)
+
+                salvar_excel(df_total, df_pendentes)
+
+                st.success("Localidade(s) excluída(s) com sucesso.")
+                st.rerun()
 
 
 with aba_concluidas:
     st.subheader("Localidades Concluídas")
+    st.caption(
+        "As localidades aparecem aqui automaticamente quando são removidas da lista de pendentes."
+    )
 
     st.dataframe(
         df_concluidas,
