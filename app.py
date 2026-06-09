@@ -210,8 +210,28 @@ except Exception as erro:
     st.stop()
 
 
+colunas_padrao = [
+    "UF",
+    "Cidade",
+    "Data da Solicitação",
+    "Previsão",
+    "Prioridade",
+    "Relatório Detalhado"
+]
+
+for coluna in colunas_padrao:
+    if coluna not in df_total.columns:
+        df_total[coluna] = ""
+
+    if coluna not in df_pendentes.columns:
+        df_pendentes[coluna] = ""
+
+
 df_total["Cidade"] = df_total["Cidade"].astype(str).str.strip()
+df_total["UF"] = df_total["UF"].astype(str).str.strip().str.upper()
+
 df_pendentes["Cidade"] = df_pendentes["Cidade"].astype(str).str.strip()
+df_pendentes["UF"] = df_pendentes["UF"].astype(str).str.strip().str.upper()
 df_pendentes["Prioridade"] = df_pendentes["Prioridade"].astype(str).str.strip()
 
 for df in [df_total, df_pendentes]:
@@ -235,7 +255,11 @@ if "Relatório Detalhado" in df_pendentes.columns:
 
 
 df_concluidas = df_total[
-    ~df_total["Cidade"].isin(df_pendentes["Cidade"])
+    ~(
+        df_total["Cidade"].astype(str).str.upper().isin(
+            df_pendentes["Cidade"].astype(str).str.upper()
+        )
+    )
 ]
 
 total = len(df_total)
@@ -325,6 +349,183 @@ with aba_dashboard:
     col5.metric("🔴 Prioridade Alta", alta)
     col6.metric("🟡 Prioridade Média", media)
     col7.metric("🟢 Prioridade Baixa", baixa)
+
+    st.divider()
+
+    st.subheader("Gerenciar Localidades")
+    st.caption(
+        "Adicione novas localidades, marque pendências como concluídas ou exclua cadastros feitos por engano."
+    )
+
+    with st.expander("Adicionar nova localidade", expanded=False):
+        add_col1, add_col2, add_col3 = st.columns(3)
+
+        with add_col1:
+            nova_uf = st.text_input("UF", max_chars=2).upper()
+            nova_cidade = st.text_input("Cidade")
+
+        with add_col2:
+            nova_data = st.date_input("Data da Solicitação")
+            nova_previsao = st.date_input("Previsão")
+
+        with add_col3:
+            nova_prioridade = st.selectbox(
+                "Prioridade",
+                ["Alta", "Média", "Baixa"]
+            )
+
+            novo_relatorio = st.text_area(
+                "Relatório Detalhado",
+                height=120,
+                placeholder="Digite a situação da localidade..."
+            )
+
+        if st.button("Adicionar Localidade"):
+            if not nova_uf or not nova_cidade:
+                st.warning("Preencha pelo menos UF e Cidade.")
+            else:
+                cidade_formatada = nova_cidade.strip().title()
+                uf_formatada = nova_uf.strip().upper()
+
+                existe_total = df_total[
+                    (df_total["Cidade"].astype(str).str.upper() == cidade_formatada.upper()) &
+                    (df_total["UF"].astype(str).str.upper()
+                     == uf_formatada.upper())
+                ]
+
+                existe_pendente = df_pendentes[
+                    (df_pendentes["Cidade"].astype(str).str.upper() == cidade_formatada.upper()) &
+                    (df_pendentes["UF"].astype(
+                        str).str.upper() == uf_formatada.upper())
+                ]
+
+                if not existe_total.empty:
+                    st.warning(
+                        "Essa localidade já existe em Localidades Total.")
+                elif not existe_pendente.empty:
+                    st.warning(
+                        "Essa localidade já existe em Localidades Pendentes.")
+                else:
+                    nova_linha = {
+                        "UF": uf_formatada,
+                        "Cidade": cidade_formatada,
+                        "Data da Solicitação": nova_data.strftime("%d/%m/%Y"),
+                        "Previsão": nova_previsao.strftime("%d/%m/%Y"),
+                        "Prioridade": nova_prioridade,
+                        "Relatório Detalhado": novo_relatorio.strip()
+                    }
+
+                    for coluna in df_total.columns:
+                        if coluna not in nova_linha:
+                            nova_linha[coluna] = ""
+
+                    for coluna in df_pendentes.columns:
+                        if coluna not in nova_linha:
+                            nova_linha[coluna] = ""
+
+                    df_total = pd.concat(
+                        [df_total, pd.DataFrame([nova_linha])[
+                            df_total.columns]],
+                        ignore_index=True
+                    )
+
+                    df_pendentes = pd.concat(
+                        [df_pendentes, pd.DataFrame([nova_linha])[
+                            df_pendentes.columns]],
+                        ignore_index=True
+                    )
+
+                    salvar_excel(df_total, df_pendentes)
+
+                    st.success("Localidade adicionada com sucesso.")
+                    st.rerun()
+
+    with st.expander("Marcar localidade como concluída", expanded=False):
+        if df_pendentes.empty:
+            st.info("Não há localidades pendentes para concluir.")
+        else:
+            df_pendentes_opcoes = df_pendentes.copy()
+            df_pendentes_opcoes["Opção"] = (
+                df_pendentes_opcoes["Cidade"].astype(str)
+                + " - "
+                + df_pendentes_opcoes["UF"].astype(str)
+                + " | Prioridade: "
+                + df_pendentes_opcoes["Prioridade"].astype(str)
+            )
+
+            opcoes_concluir = df_pendentes_opcoes["Opção"].tolist()
+
+            localidade_concluir = st.selectbox(
+                "Selecione a localidade pendente",
+                opcoes_concluir
+            )
+
+            if st.button("Marcar como Concluída"):
+                indice = df_pendentes_opcoes[
+                    df_pendentes_opcoes["Opção"] == localidade_concluir
+                ].index[0]
+
+                df_pendentes = df_pendentes.drop(
+                    index=indice).reset_index(drop=True)
+
+                salvar_excel(df_total, df_pendentes)
+
+                st.success("Localidade marcada como concluída.")
+                st.rerun()
+
+    with st.expander("Excluir localidade cadastrada por engano", expanded=False):
+        if df_total.empty:
+            st.info("Não há localidades cadastradas para excluir.")
+        else:
+            df_total_opcoes = df_total.copy()
+            df_total_opcoes["Opção"] = (
+                df_total_opcoes["Cidade"].astype(str)
+                + " - "
+                + df_total_opcoes["UF"].astype(str)
+            )
+
+            opcoes_excluir = df_total_opcoes["Opção"].tolist()
+
+            localidade_excluir = st.selectbox(
+                "Selecione a localidade para excluir definitivamente",
+                opcoes_excluir
+            )
+
+            confirmar_exclusao = st.checkbox(
+                "Confirmo que desejo excluir essa localidade do Total e dos Pendentes"
+            )
+
+            if st.button("Excluir Localidade"):
+                if not confirmar_exclusao:
+                    st.warning("Marque a confirmação antes de excluir.")
+                else:
+                    linha_excluir = df_total_opcoes[
+                        df_total_opcoes["Opção"] == localidade_excluir
+                    ].iloc[0]
+
+                    cidade_excluir = str(linha_excluir["Cidade"]).upper()
+                    uf_excluir = str(linha_excluir["UF"]).upper()
+
+                    df_total = df_total[
+                        ~(
+                            (df_total["Cidade"].astype(str).str.upper() == cidade_excluir) &
+                            (df_total["UF"].astype(
+                                str).str.upper() == uf_excluir)
+                        )
+                    ].reset_index(drop=True)
+
+                    df_pendentes = df_pendentes[
+                        ~(
+                            (df_pendentes["Cidade"].astype(str).str.upper() == cidade_excluir) &
+                            (df_pendentes["UF"].astype(
+                                str).str.upper() == uf_excluir)
+                        )
+                    ].reset_index(drop=True)
+
+                    salvar_excel(df_total, df_pendentes)
+
+                    st.success("Localidade excluída com sucesso.")
+                    st.rerun()
 
     st.divider()
 
