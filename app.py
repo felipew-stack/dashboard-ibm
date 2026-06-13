@@ -10,18 +10,17 @@ from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Dashboard IBM", layout="wide")
 
-# ==========================
-# CONFIGURAÇÕES
-# ==========================
-
 SHEET_ID = "1gNBenj4s19pOtlNbIAZp0_CYpAXBidxXbAtg9hdOXcM"
 
 ABA_TOTAL = "Localidades Total"
 ABA_PENDENTES = "Localidades Pendentes"
+ABA_CONCLUIDAS = "Localidades Concluídas"
 
 ARQUIVO_LOGO = "logo_3am.png"
 
-COLUNAS_PADRAO = [
+COLUNAS_TOTAL = ["UF", "Cidade"]
+COLUNAS_CONCLUIDAS = ["UF", "Cidade"]
+COLUNAS_PENDENTES = [
     "UF",
     "Cidade",
     "Data da Solicitação",
@@ -30,10 +29,6 @@ COLUNAS_PADRAO = [
     "Relatório Detalhado"
 ]
 
-
-# ==========================
-# GOOGLE SHEETS
-# ==========================
 
 def conectar_google_sheets():
     try:
@@ -48,9 +43,7 @@ def conectar_google_sheets():
         )
 
         cliente = gspread.authorize(credenciais)
-        planilha = cliente.open_by_key(SHEET_ID)
-
-        return planilha
+        return cliente.open_by_key(SHEET_ID)
 
     except Exception as erro:
         st.error("Erro ao conectar com o Google Sheets.")
@@ -58,29 +51,27 @@ def conectar_google_sheets():
         st.stop()
 
 
-def carregar_aba(planilha, nome_aba):
+def carregar_aba(planilha, nome_aba, colunas):
     try:
         aba = planilha.worksheet(nome_aba)
         dados = aba.get_all_records()
-
         df = pd.DataFrame(dados)
 
-        for coluna in COLUNAS_PADRAO:
+        for coluna in colunas:
             if coluna not in df.columns:
                 df[coluna] = ""
 
-        df = df[COLUNAS_PADRAO]
-
+        df = df[colunas]
         return df
 
     except gspread.WorksheetNotFound:
         aba = planilha.add_worksheet(
             title=nome_aba,
             rows=100,
-            cols=len(COLUNAS_PADRAO)
+            cols=len(colunas)
         )
-        aba.update([COLUNAS_PADRAO])
-        return pd.DataFrame(columns=COLUNAS_PADRAO)
+        aba.update([colunas])
+        return pd.DataFrame(columns=colunas)
 
     except Exception as erro:
         st.error(f"Erro ao carregar a aba '{nome_aba}'.")
@@ -88,26 +79,34 @@ def carregar_aba(planilha, nome_aba):
         st.stop()
 
 
-def salvar_aba(planilha, nome_aba, df):
+def salvar_aba(planilha, nome_aba, df, colunas, permitir_vazio=False):
     try:
+        if df is None:
+            st.error(
+                f"Salvamento bloqueado: dados da aba '{nome_aba}' não encontrados.")
+            st.stop()
+
+        if df.empty and not permitir_vazio:
+            st.error(
+                f"Salvamento bloqueado: a aba '{nome_aba}' está vazia. "
+                "Nada foi alterado no Google Sheets."
+            )
+            st.stop()
+
         aba = planilha.worksheet(nome_aba)
 
         df_salvar = df.copy()
 
-        for coluna in COLUNAS_PADRAO:
+        for coluna in colunas:
             if coluna not in df_salvar.columns:
                 df_salvar[coluna] = ""
 
-        df_salvar = df_salvar[COLUNAS_PADRAO]
-        df_salvar = df_salvar.fillna("")
-
+        df_salvar = df_salvar[colunas].fillna("")
         valores = [df_salvar.columns.tolist()] + \
             df_salvar.astype(str).values.tolist()
 
         aba.clear()
-
-        if valores:
-            aba.update(valores)
+        aba.update(valores)
 
     except Exception as erro:
         st.error(f"Erro ao salvar a aba '{nome_aba}'.")
@@ -115,15 +114,18 @@ def salvar_aba(planilha, nome_aba, df):
         st.stop()
 
 
-def salvar_google_sheets(df_total, df_pendentes):
+def salvar_google_sheets(df_total, df_pendentes, df_concluidas):
     planilha = conectar_google_sheets()
-    salvar_aba(planilha, ABA_TOTAL, df_total)
-    salvar_aba(planilha, ABA_PENDENTES, df_pendentes)
 
+    df_total = ordenar_localidades(df_total, COLUNAS_TOTAL)
+    df_concluidas = ordenar_localidades(df_concluidas, COLUNAS_CONCLUIDAS)
 
-# ==========================
-# FUNÇÕES AUXILIARES
-# ==========================
+    salvar_aba(planilha, ABA_TOTAL, df_total, COLUNAS_TOTAL)
+    salvar_aba(planilha, ABA_PENDENTES, df_pendentes,
+               COLUNAS_PENDENTES, permitir_vazio=True)
+    salvar_aba(planilha, ABA_CONCLUIDAS, df_concluidas,
+               COLUNAS_CONCLUIDAS, permitir_vazio=True)
+
 
 def imagem_base64(caminho):
     try:
@@ -131,6 +133,23 @@ def imagem_base64(caminho):
             return base64.b64encode(arquivo.read()).decode()
     except FileNotFoundError:
         return None
+
+
+def ordenar_localidades(df, colunas):
+    df = df.copy()
+
+    for coluna in colunas:
+        if coluna not in df.columns:
+            df[coluna] = ""
+
+    df = df[colunas]
+    df["UF"] = df["UF"].astype(str).str.strip().str.upper()
+    df["Cidade"] = df["Cidade"].astype(str).str.strip()
+
+    df = df[df["Cidade"] != ""]
+    df = df.sort_values(by=["Cidade", "UF"]).reset_index(drop=True)
+
+    return df
 
 
 def corrigir_relatorio(texto):
@@ -153,8 +172,7 @@ def corrigir_relatorio(texto):
         "deu retorno": "retornou",
         "nega a proposta": "negou a proposta",
         "negou a proprosta": "negou a proposta",
-        "proprosta": "proposta",
-        "Buscando": "Em busca de recurso técnico para a localidade."
+        "proprosta": "proposta"
     }
 
     for errado, certo in correcoes.items():
@@ -163,33 +181,53 @@ def corrigir_relatorio(texto):
     return texto
 
 
+RELATORIOS_PADRAO = [
+    "Em busca de recurso técnico para a localidade. Até o momento, os profissionais acionados não retornaram ou não demonstraram disponibilidade para atendimento.",
+    "Seguimos realizando buscas na região. Foram identificados alguns recursos, porém ainda não obtivemos confirmação para fechamento da parceria.",
+    "A localidade permanece em aberto. Os contatos realizados até o momento não resultaram em profissionais disponíveis para atendimento.",
+    "Foram efetuadas buscas e contatos com recursos da região, porém ainda não foi possível validar um profissional para cobertura da demanda.",
+    "Seguimos priorizando a localidade. Os profissionais encontrados até o momento declinaram da oportunidade ou não responderam às tentativas de contato.",
+    "A equipe continua em prospecção de recursos técnicos. Até o momento não foi possível concluir a validação de um profissional apto para atendimento.",
+    "Foram realizadas novas tentativas de contato na região. Permanecemos aguardando retorno dos profissionais acionados.",
+    "A localidade segue em acompanhamento. As buscas continuam sendo realizadas para identificação de recursos compatíveis com a necessidade do projeto.",
+    "Identificamos possíveis recursos na região, porém ainda não houve aceite para execução dos atendimentos solicitados.",
+    "Seguimos com a prospecção de profissionais para a localidade. Até o momento não obtivemos sucesso na confirmação de disponibilidade dos recursos contatados."
+]
+
+
+def preencher_relatorios_vazios(df):
+    df = df.copy()
+
+    if "Relatório Detalhado" not in df.columns:
+        df["Relatório Detalhado"] = ""
+
+    for indice in df.index:
+        relatorio = str(df.loc[indice, "Relatório Detalhado"]).strip()
+
+        if relatorio in ["", "nan", "None", "NaT"]:
+            df.loc[indice, "Relatório Detalhado"] = RELATORIOS_PADRAO[indice %
+                                                                      len(RELATORIOS_PADRAO)]
+        else:
+            df.loc[indice, "Relatório Detalhado"] = corrigir_relatorio(
+                relatorio)
+
+    return df
+
+
 def gerar_excel_relatorio(df):
     output = BytesIO()
     df_export = df.copy()
 
-    colunas_preferidas = [
-        "UF",
-        "Cidade",
-        "Data da Solicitação",
-        "Previsão",
-        "Prioridade",
-        "Relatório Detalhado"
-    ]
-
     colunas_existentes = [
-        coluna for coluna in colunas_preferidas
+        coluna for coluna in COLUNAS_PENDENTES
         if coluna in df_export.columns
     ]
 
     df_export = df_export[colunas_existentes]
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_export.to_excel(
-            writer,
-            index=False,
-            sheet_name="Relatório Detalhado"
-        )
-
+        df_export.to_excel(writer, index=False,
+                           sheet_name="Relatório Detalhado")
         worksheet = writer.sheets["Relatório Detalhado"]
 
         azul_escuro = "003B71"
@@ -203,44 +241,24 @@ def gerar_excel_relatorio(df):
 
         for cell in worksheet[1]:
             cell.fill = PatternFill(
-                start_color=azul_escuro,
-                end_color=azul_escuro,
-                fill_type="solid"
-            )
+                start_color=azul_escuro, end_color=azul_escuro, fill_type="solid")
             cell.font = Font(color=branco, bold=True)
             cell.alignment = Alignment(
-                horizontal="center",
-                vertical="center",
-                wrap_text=True
-            )
+                horizontal="center", vertical="center", wrap_text=True)
             cell.border = Border(
-                left=borda_fina,
-                right=borda_fina,
-                top=borda_fina,
-                bottom=borda_fina
-            )
+                left=borda_fina, right=borda_fina, top=borda_fina, bottom=borda_fina)
 
         worksheet.row_dimensions[1].height = 28
 
         for row in worksheet.iter_rows(min_row=2):
             for cell in row:
-                cell.alignment = Alignment(
-                    vertical="top",
-                    wrap_text=True
-                )
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
                 cell.border = Border(
-                    left=borda_fina,
-                    right=borda_fina,
-                    top=borda_fina,
-                    bottom=borda_fina
-                )
+                    left=borda_fina, right=borda_fina, top=borda_fina, bottom=borda_fina)
 
                 if cell.row % 2 == 0:
                     cell.fill = PatternFill(
-                        start_color=cinza_claro,
-                        end_color=cinza_claro,
-                        fill_type="solid"
-                    )
+                        start_color=cinza_claro, end_color=cinza_claro, fill_type="solid")
 
         if "Prioridade" in df_export.columns:
             coluna_prioridade = df_export.columns.get_loc("Prioridade") + 1
@@ -251,26 +269,15 @@ def gerar_excel_relatorio(df):
 
                 if valor == "Alta":
                     celula.fill = PatternFill(
-                        start_color=vermelho,
-                        end_color=vermelho,
-                        fill_type="solid"
-                    )
+                        start_color=vermelho, end_color=vermelho, fill_type="solid")
                     celula.font = Font(bold=True)
-
                 elif valor == "Média":
                     celula.fill = PatternFill(
-                        start_color=amarelo,
-                        end_color=amarelo,
-                        fill_type="solid"
-                    )
+                        start_color=amarelo, end_color=amarelo, fill_type="solid")
                     celula.font = Font(bold=True)
-
                 elif valor == "Baixa":
                     celula.fill = PatternFill(
-                        start_color=verde,
-                        end_color=verde,
-                        fill_type="solid"
-                    )
+                        start_color=verde, end_color=verde, fill_type="solid")
                     celula.font = Font(bold=True)
 
         larguras = {
@@ -292,86 +299,43 @@ def gerar_excel_relatorio(df):
     return output.getvalue()
 
 
-# ==========================
-# CARREGAMENTO DOS DADOS
-# ==========================
-
 planilha = conectar_google_sheets()
 
-df_total = carregar_aba(planilha, ABA_TOTAL)
-df_pendentes = carregar_aba(planilha, ABA_PENDENTES)
+df_total = carregar_aba(planilha, ABA_TOTAL, COLUNAS_TOTAL)
+df_pendentes = carregar_aba(planilha, ABA_PENDENTES, COLUNAS_PENDENTES)
+df_concluidas = carregar_aba(planilha, ABA_CONCLUIDAS, COLUNAS_CONCLUIDAS)
 
-for coluna in COLUNAS_PADRAO:
-    if coluna not in df_total.columns:
-        df_total[coluna] = ""
+df_total = ordenar_localidades(df_total, COLUNAS_TOTAL)
+df_concluidas = ordenar_localidades(df_concluidas, COLUNAS_CONCLUIDAS)
 
+for coluna in COLUNAS_PENDENTES:
     if coluna not in df_pendentes.columns:
         df_pendentes[coluna] = ""
 
-df_total = df_total[COLUNAS_PADRAO]
-df_pendentes = df_pendentes[COLUNAS_PADRAO]
-
-df_total["Cidade"] = df_total["Cidade"].astype(str).str.strip()
-df_total["UF"] = df_total["UF"].astype(str).str.strip().str.upper()
+df_pendentes = df_pendentes[COLUNAS_PENDENTES]
 
 df_pendentes["Cidade"] = df_pendentes["Cidade"].astype(str).str.strip()
 df_pendentes["UF"] = df_pendentes["UF"].astype(str).str.strip().str.upper()
 df_pendentes["Prioridade"] = df_pendentes["Prioridade"].astype(str).str.strip()
 
-for df in [df_total, df_pendentes]:
-    if "Data da Solicitação" in df.columns:
-        df["Data da Solicitação"] = df["Data da Solicitação"].astype(str).replace(
-            ["nan", "NaT", "None"], ""
-        )
+df_pendentes["Data da Solicitação"] = df_pendentes["Data da Solicitação"].astype(str).replace(
+    ["nan", "NaT", "None"], ""
+)
 
-    if "Previsão" in df.columns:
-        df["Previsão"] = df["Previsão"].astype(str).replace(
-            ["nan", "NaT", "None"], ""
-        )
+df_pendentes["Previsão"] = df_pendentes["Previsão"].astype(str).replace(
+    ["nan", "NaT", "None"], ""
+)
 
-if "Relatório Detalhado" in df_pendentes.columns:
-    df_pendentes["Relatório Detalhado"] = df_pendentes[
-        "Relatório Detalhado"
-    ].apply(corrigir_relatorio)
-
-
-# ==========================
-# CÁLCULOS
-# ==========================
+df_pendentes = preencher_relatorios_vazios(df_pendentes)
 
 total = len(df_total)
 pendentes = len(df_pendentes)
-concluidas = total - pendentes
+concluidas = len(df_concluidas)
 percentual = round((concluidas / total) * 100, 1) if total > 0 else 0
-
-df_total_chave = df_total.copy()
-df_pendentes_chave = df_pendentes.copy()
-
-df_total_chave["__chave"] = (
-    df_total_chave["UF"].astype(str).str.upper().str.strip()
-    + "|"
-    + df_total_chave["Cidade"].astype(str).str.upper().str.strip()
-)
-
-df_pendentes_chave["__chave"] = (
-    df_pendentes_chave["UF"].astype(str).str.upper().str.strip()
-    + "|"
-    + df_pendentes_chave["Cidade"].astype(str).str.upper().str.strip()
-)
-
-chaves_pendentes = set(df_pendentes_chave["__chave"])
-
-df_concluidas = df_total_chave[
-    ~df_total_chave["__chave"].isin(chaves_pendentes)
-].drop(columns=["__chave"])
 
 alta = len(df_pendentes[df_pendentes["Prioridade"] == "Alta"])
 media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
-
-# ==========================
-# ESTILO
-# ==========================
 
 st.markdown(
     """
@@ -399,11 +363,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-
-# ==========================
-# CABEÇALHO
-# ==========================
-
 logo_col, titulo_col = st.columns([1.2, 4])
 
 with logo_col:
@@ -425,10 +384,8 @@ with titulo_col:
     st.markdown('<div class="header-title">', unsafe_allow_html=True)
     st.title("Projeto IBM")
     st.caption(
-        "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado"
-    )
+        "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado")
     st.markdown("</div>", unsafe_allow_html=True)
-
 
 aba_dashboard, aba_relatorio, aba_total, aba_concluidas = st.tabs([
     "Dashboard",
@@ -436,10 +393,6 @@ aba_dashboard, aba_relatorio, aba_total, aba_concluidas = st.tabs([
     "Localidades Total",
     "Localidades Concluídas"
 ])
-# ==========================
-# ABA DASHBOARD
-# ==========================
-
 with aba_dashboard:
     st.divider()
 
@@ -478,9 +431,7 @@ with aba_dashboard:
 
         with add_col3:
             nova_prioridade = st.selectbox(
-                "Prioridade",
-                ["Alta", "Média", "Baixa"]
-            )
+                "Prioridade", ["Alta", "Média", "Baixa"])
 
             novo_relatorio = st.text_area(
                 "Relatório Detalhado",
@@ -514,7 +465,12 @@ with aba_dashboard:
                     st.warning(
                         "Essa localidade já existe em Localidades Pendentes.")
                 else:
-                    nova_linha = {
+                    nova_linha_total = {
+                        "UF": uf_formatada,
+                        "Cidade": cidade_formatada
+                    }
+
+                    nova_linha_pendente = {
                         "UF": uf_formatada,
                         "Cidade": cidade_formatada,
                         "Data da Solicitação": nova_data.strftime("%d/%m/%Y"),
@@ -523,17 +479,21 @@ with aba_dashboard:
                         "Relatório Detalhado": novo_relatorio.strip()
                     }
 
+                    if not nova_linha_pendente["Relatório Detalhado"]:
+                        nova_linha_pendente["Relatório Detalhado"] = RELATORIOS_PADRAO[len(
+                            df_pendentes) % len(RELATORIOS_PADRAO)]
+
                     df_total = pd.concat(
-                        [df_total, pd.DataFrame([nova_linha])],
+                        [df_total, pd.DataFrame([nova_linha_total])],
                         ignore_index=True
                     )
 
                     df_pendentes = pd.concat(
-                        [df_pendentes, pd.DataFrame([nova_linha])],
+                        [df_pendentes, pd.DataFrame([nova_linha_pendente])],
                         ignore_index=True
                     )
 
-                    salvar_google_sheets(df_total, df_pendentes)
+                    salvar_google_sheets(df_total, df_pendentes, df_concluidas)
 
                     st.success("Localidade adicionada com sucesso.")
                     st.rerun()
@@ -562,10 +522,7 @@ with aba_dashboard:
         )
 
         fig_status.update_traces(
-            textposition="inside",
-            textinfo="percent+label"
-        )
-
+            textposition="inside", textinfo="percent+label")
         st.plotly_chart(fig_status, use_container_width=True)
 
     with graf2:
@@ -611,10 +568,7 @@ with aba_dashboard:
             quantidade_uf = int(linha_uf["Quantidade"])
 
             with colunas_uf[posicao % total_colunas_uf]:
-                if st.button(
-                    f"{uf_atual} ({quantidade_uf})",
-                    key=f"botao_uf_{uf_atual}"
-                ):
+                if st.button(f"{uf_atual} ({quantidade_uf})", key=f"botao_uf_{uf_atual}"):
                     if st.session_state["uf_expandida"] == uf_atual:
                         st.session_state["uf_expandida"] = None
                     else:
@@ -632,25 +586,13 @@ with aba_dashboard:
             for _, linha_localidade in localidades_estado.iterrows():
                 cidade = str(linha_localidade.get("Cidade", "")).strip()
                 prioridade_localidade = str(
-                    linha_localidade.get("Prioridade", "")
-                ).strip()
+                    linha_localidade.get("Prioridade", "")).strip()
                 data_solicitacao = linha_localidade.get(
-                    "Data da Solicitação",
-                    "-"
-                )
+                    "Data da Solicitação", "-")
                 previsao = linha_localidade.get("Previsão", "-")
                 relatorio = linha_localidade.get("Relatório Detalhado", "")
 
-                if pd.isna(previsao) or previsao == "None" or previsao == "NaT":
-                    previsao = "-"
-
-                if pd.isna(relatorio):
-                    relatorio = ""
-
-                with st.expander(
-                    f"📍 {cidade} | Prioridade: {prioridade_localidade}",
-                    expanded=False
-                ):
+                with st.expander(f"📍 {cidade} | Prioridade: {prioridade_localidade}", expanded=False):
                     st.markdown(f"**UF:** {uf_selecionada}")
                     st.markdown(f"**Cidade:** {cidade}")
                     st.markdown(f"**Prioridade:** {prioridade_localidade}")
@@ -672,10 +614,8 @@ with aba_dashboard:
         busca = st.text_input("Pesquisar cidade")
 
     with filtro2:
-        prioridade = st.selectbox(
-            "Filtrar por prioridade",
-            ["Todas", "Alta", "Média", "Baixa"]
-        )
+        prioridade = st.selectbox("Filtrar por prioridade", [
+                                  "Todas", "Alta", "Média", "Baixa"])
 
     with filtro3:
         uf = st.selectbox(
@@ -688,25 +628,20 @@ with aba_dashboard:
     tabela["Concluir"] = False
 
     colunas_editor = [
-        col for col in [
-            "UF",
-            "Cidade",
-            "Data da Solicitação",
-            "Previsão",
-            "Prioridade",
-            "Concluir",
-            "__linha_original"
-        ]
-        if col in tabela.columns
+        "UF",
+        "Cidade",
+        "Data da Solicitação",
+        "Previsão",
+        "Prioridade",
+        "Concluir",
+        "__linha_original"
     ]
 
     tabela = tabela[colunas_editor]
 
     if busca:
-        tabela = tabela[
-            tabela["Cidade"].astype(str).str.contains(
-                busca, case=False, na=False)
-        ]
+        tabela = tabela[tabela["Cidade"].astype(
+            str).str.contains(busca, case=False, na=False)]
 
     if prioridade != "Todas":
         tabela = tabela[tabela["Prioridade"] == prioridade]
@@ -746,141 +681,138 @@ with aba_dashboard:
             nova_prioridade = str(linha["Prioridade"]).strip()
 
             if nova_prioridade in ["Alta", "Média", "Baixa"]:
-                df_pendentes.loc[
-                    indice_original,
-                    "Prioridade"
-                ] = nova_prioridade
+                df_pendentes.loc[indice_original,
+                                 "Prioridade"] = nova_prioridade
 
             if bool(linha["Concluir"]):
                 indices_concluir.append(indice_original)
 
         if indices_concluir:
+            localidades_concluidas = df_pendentes.loc[
+                indices_concluir,
+                ["UF", "Cidade"]
+            ].copy()
+
+            df_concluidas = pd.concat(
+                [df_concluidas, localidades_concluidas],
+                ignore_index=True
+            )
+
+            df_concluidas = df_concluidas.drop_duplicates(
+                subset=["UF", "Cidade"],
+                keep="first"
+            )
+
             df_pendentes = df_pendentes.drop(
                 index=indices_concluir
             ).reset_index(drop=True)
 
-        salvar_google_sheets(df_total, df_pendentes)
+        salvar_google_sheets(df_total, df_pendentes, df_concluidas)
 
         st.success("Alterações salvas com sucesso.")
         st.rerun()
 
 
-# ==========================
-# ABA RELATÓRIO
-# ==========================
-
 with aba_relatorio:
-    st.subheader("Relatório Detalhado das Localidades")
+    st.subheader("Relatório Detalhado das Localidades Pendentes")
     st.caption(
         "Consulte, filtre e edite o texto do relatório detalhado diretamente pelos cards."
     )
 
-    if "Relatório Detalhado" not in df_pendentes.columns:
-        st.warning(
-            "A coluna 'Relatório Detalhado' não foi encontrada na planilha."
+    col_rel1, col_rel2, col_rel3 = st.columns(3)
+
+    with col_rel1:
+        busca_relatorio = st.text_input("Pesquisar localidade no relatório")
+
+    with col_rel2:
+        uf_relatorio = st.selectbox(
+            "Filtrar UF no relatório",
+            ["Todas"] + sorted(df_pendentes["UF"].dropna().unique().tolist())
         )
-    else:
-        col_rel1, col_rel2, col_rel3 = st.columns(3)
 
-        with col_rel1:
-            busca_relatorio = st.text_input(
-                "Pesquisar localidade no relatório"
+    with col_rel3:
+        prioridade_relatorio = st.selectbox(
+            "Filtrar prioridade no relatório",
+            ["Todas", "Alta", "Média", "Baixa"]
+        )
+
+    tabela_relatorio = df_pendentes.copy()
+    tabela_relatorio["__linha_original"] = tabela_relatorio.index
+
+    if busca_relatorio:
+        tabela_relatorio = tabela_relatorio[
+            tabela_relatorio["Cidade"].astype(str).str.contains(
+                busca_relatorio,
+                case=False,
+                na=False
+            )
+        ]
+
+    if uf_relatorio != "Todas":
+        tabela_relatorio = tabela_relatorio[tabela_relatorio["UF"]
+                                            == uf_relatorio]
+
+    if prioridade_relatorio != "Todas":
+        tabela_relatorio = tabela_relatorio[
+            tabela_relatorio["Prioridade"] == prioridade_relatorio
+        ]
+
+    st.write(f"Total filtrado: {len(tabela_relatorio)} localidade(s)")
+
+    relatorios_editados = {}
+
+    for _, linha in tabela_relatorio.iterrows():
+        indice_original = int(linha["__linha_original"])
+        cidade = linha.get("Cidade", "")
+        uf = linha.get("UF", "")
+        prioridade = linha.get("Prioridade", "")
+        data = linha.get("Data da Solicitação", "")
+        previsao = linha.get("Previsão", "")
+        relatorio = linha.get("Relatório Detalhado", "")
+
+        with st.container(border=True):
+            st.markdown(f"### {cidade} - {uf}")
+            st.markdown(f"**Prioridade:** {prioridade}")
+            st.markdown(f"**Data da Solicitação:** {data}")
+            st.markdown(f"**Previsão:** {previsao}")
+            st.markdown("**Situação:**")
+
+            novo_relatorio = st.text_area(
+                label="Editar relatório",
+                value=str(relatorio),
+                key=f"relatorio_editavel_{indice_original}",
+                height=120,
+                label_visibility="collapsed"
             )
 
-        with col_rel2:
-            uf_relatorio = st.selectbox(
-                "Filtrar UF no relatório",
-                ["Todas"] + sorted(
-                    df_pendentes["UF"].dropna().unique().tolist()
-                )
-            )
+            relatorios_editados[indice_original] = novo_relatorio
 
-        with col_rel3:
-            prioridade_relatorio = st.selectbox(
-                "Filtrar prioridade no relatório",
-                ["Todas", "Alta", "Média", "Baixa"]
-            )
+    col_salvar_rel1, col_salvar_rel2 = st.columns([1, 3])
 
-        tabela_relatorio = df_pendentes.copy()
-        tabela_relatorio["__linha_original"] = tabela_relatorio.index
-
-        if busca_relatorio:
-            tabela_relatorio = tabela_relatorio[
-                tabela_relatorio["Cidade"].astype(str).str.contains(
-                    busca_relatorio,
-                    case=False,
-                    na=False
-                )
-            ]
-
-        if uf_relatorio != "Todas":
-            tabela_relatorio = tabela_relatorio[
-                tabela_relatorio["UF"] == uf_relatorio
-            ]
-
-        if prioridade_relatorio != "Todas":
-            tabela_relatorio = tabela_relatorio[
-                tabela_relatorio["Prioridade"] == prioridade_relatorio
-            ]
-
-        st.write(f"Total filtrado: {len(tabela_relatorio)} localidade(s)")
-
-        relatorios_editados = {}
-
-        for _, linha in tabela_relatorio.iterrows():
-            indice_original = int(linha["__linha_original"])
-            cidade = linha.get("Cidade", "")
-            uf = linha.get("UF", "")
-            prioridade = linha.get("Prioridade", "")
-            data = linha.get("Data da Solicitação", "")
-            previsao = linha.get("Previsão", "")
-            relatorio = linha.get("Relatório Detalhado", "")
-
-            if pd.isna(previsao) or previsao == "None" or previsao == "NaT":
-                previsao = "-"
-
-            if pd.isna(relatorio):
-                relatorio = ""
-
-            with st.container(border=True):
-                st.markdown(f"### {cidade} - {uf}")
-                st.markdown(f"**Prioridade:** {prioridade}")
-                st.markdown(f"**Data da Solicitação:** {data}")
-                st.markdown(f"**Previsão:** {previsao}")
-                st.markdown("**Situação:**")
-
-                novo_relatorio = st.text_area(
-                    label="Editar relatório",
-                    value=str(relatorio),
-                    key=f"relatorio_editavel_{indice_original}",
-                    height=120,
-                    label_visibility="collapsed"
-                )
-
-                relatorios_editados[indice_original] = novo_relatorio
-
+    with col_salvar_rel1:
         if st.button("Salvar alterações do relatório"):
             for indice_original, novo_relatorio in relatorios_editados.items():
-                df_pendentes.loc[
-                    indice_original,
-                    "Relatório Detalhado"
-                ] = str(novo_relatorio).strip()
+                df_pendentes.loc[indice_original, "Relatório Detalhado"] = str(
+                    novo_relatorio).strip()
 
-            salvar_google_sheets(df_total, df_pendentes)
+            salvar_google_sheets(df_total, df_pendentes, df_concluidas)
 
             st.success("Relatório detalhado atualizado com sucesso.")
             st.rerun()
 
+    with col_salvar_rel2:
+        if st.button("Salvar textos automáticos no Google Sheets"):
+            df_pendentes = preencher_relatorios_vazios(df_pendentes)
+            salvar_google_sheets(df_total, df_pendentes, df_concluidas)
+            st.success(
+                "Relatórios vazios preenchidos e salvos no Google Sheets.")
+            st.rerun()
 
-# ==========================
-# ABA LOCALIDADES TOTAL
-# ==========================
 
 with aba_total:
     st.subheader("Localidades Total")
     st.caption(
-        "Lista com todas as localidades abertas. Marque uma localidade como Excluir apenas se ela foi cadastrada por engano."
-    )
+        "Lista geral de localidades abertas, organizada em ordem alfabética.")
 
     filtro_total1, filtro_total2 = st.columns(2)
 
@@ -897,22 +829,6 @@ with aba_total:
     tabela_total["__linha_original"] = tabela_total.index
     tabela_total["Excluir"] = False
 
-    colunas_total_editor = [
-        col for col in [
-            "UF",
-            "Cidade",
-            "Data da Solicitação",
-            "Previsão",
-            "Prioridade",
-            "Relatório Detalhado",
-            "Excluir",
-            "__linha_original"
-        ]
-        if col in tabela_total.columns
-    ]
-
-    tabela_total = tabela_total[colunas_total_editor]
-
     if busca_total:
         tabela_total = tabela_total[
             tabela_total["Cidade"].astype(str).str.contains(
@@ -926,14 +842,11 @@ with aba_total:
         tabela_total = tabela_total[tabela_total["UF"] == uf_total]
 
     tabela_total_editada = st.data_editor(
-        tabela_total,
+        tabela_total[["UF", "Cidade", "Excluir", "__linha_original"]],
         use_container_width=True,
         hide_index=True,
         key="editor_localidades_total",
-        disabled=[
-            col for col in tabela_total.columns
-            if col not in ["Excluir"]
-        ],
+        disabled=["UF", "Cidade", "__linha_original"],
         column_config={
             "Excluir": st.column_config.CheckboxColumn(
                 "Excluir",
@@ -945,7 +858,7 @@ with aba_total:
     )
 
     confirmar_exclusao_total = st.checkbox(
-        "Confirmo que desejo excluir as localidades marcadas do Total e dos Pendentes"
+        "Confirmo que desejo excluir as localidades marcadas do Total, Pendentes e Concluídas"
     )
 
     if st.button("Excluir localidades marcadas"):
@@ -959,9 +872,8 @@ with aba_total:
             if linhas_para_excluir.empty:
                 st.warning("Nenhuma localidade foi marcada para exclusão.")
             else:
-                indices_total_excluir = linhas_para_excluir[
-                    "__linha_original"
-                ].astype(int).tolist()
+                indices_total_excluir = linhas_para_excluir["__linha_original"].astype(
+                    int).tolist()
 
                 localidades_excluir = df_total.loc[
                     indices_total_excluir,
@@ -969,8 +881,7 @@ with aba_total:
                 ].copy()
 
                 df_total = df_total.drop(
-                    index=indices_total_excluir
-                ).reset_index(drop=True)
+                    index=indices_total_excluir).reset_index(drop=True)
 
                 for _, localidade in localidades_excluir.iterrows():
                     uf_excluir = str(localidade["UF"]).upper().strip()
@@ -984,32 +895,57 @@ with aba_total:
                         )
                     ].reset_index(drop=True)
 
-                salvar_google_sheets(df_total, df_pendentes)
+                    df_concluidas = df_concluidas[
+                        ~(
+                            (df_concluidas["UF"].astype(str).str.upper().str.strip() == uf_excluir) &
+                            (df_concluidas["Cidade"].astype(
+                                str).str.upper().str.strip() == cidade_excluir)
+                        )
+                    ].reset_index(drop=True)
+
+                salvar_google_sheets(df_total, df_pendentes, df_concluidas)
 
                 st.success("Localidade(s) excluída(s) com sucesso.")
                 st.rerun()
 
 
-# ==========================
-# ABA CONCLUÍDAS
-# ==========================
-
 with aba_concluidas:
     st.subheader("Localidades Concluídas")
-    st.caption(
-        "As localidades aparecem aqui automaticamente quando são removidas da lista de pendentes."
-    )
+    st.caption("Lista de localidades concluídas, organizada em ordem alfabética.")
+
+    filtro_conc1, filtro_conc2 = st.columns(2)
+
+    with filtro_conc1:
+        busca_concluida = st.text_input("Pesquisar cidade concluída")
+
+    with filtro_conc2:
+        uf_concluida = st.selectbox(
+            "Filtrar UF concluída",
+            ["Todas"] + sorted(df_concluidas["UF"].dropna().unique().tolist())
+        )
+
+    tabela_concluidas = df_concluidas.copy()
+
+    if busca_concluida:
+        tabela_concluidas = tabela_concluidas[
+            tabela_concluidas["Cidade"].astype(str).str.contains(
+                busca_concluida,
+                case=False,
+                na=False
+            )
+        ]
+
+    if uf_concluida != "Todas":
+        tabela_concluidas = tabela_concluidas[
+            tabela_concluidas["UF"] == uf_concluida
+        ]
 
     st.dataframe(
-        df_concluidas,
+        tabela_concluidas[["UF", "Cidade"]],
         use_container_width=True,
         hide_index=True
     )
 
-
-# ==========================
-# EXPORTAÇÃO
-# ==========================
 
 st.divider()
 st.subheader("Exportação de Relatórios")
