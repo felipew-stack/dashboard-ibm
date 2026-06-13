@@ -4,6 +4,7 @@ import plotly.express as px
 import base64
 import gspread
 from io import BytesIO
+from datetime import datetime
 from google.oauth2.service_account import Credentials
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -15,11 +16,13 @@ SHEET_ID = "1gNBenj4s19pOtlNbIAZp0_CYpAXBidxXbAtg9hdOXcM"
 ABA_TOTAL = "Localidades Total"
 ABA_PENDENTES = "Localidades Pendentes"
 ABA_CONCLUIDAS = "Localidades Concluídas"
+ABA_BUSCAS = "Buscas por Agente"
 
 ARQUIVO_LOGO = "logo_3am.png"
 
 COLUNAS_TOTAL = ["UF", "Cidade"]
 COLUNAS_CONCLUIDAS = ["UF", "Cidade"]
+
 COLUNAS_PENDENTES = [
     "UF",
     "Cidade",
@@ -27,6 +30,26 @@ COLUNAS_PENDENTES = [
     "Previsão",
     "Prioridade",
     "Relatório Detalhado"
+]
+
+COLUNAS_BUSCAS = [
+    "Agente",
+    "UF",
+    "Cidade",
+    "Data da Busca",
+    "Status",
+    "Observação"
+]
+
+AGENTES = ["Felipe", "Diovane"]
+
+STATUS_BUSCA = [
+    "Em busca",
+    "Contato realizado",
+    "Aguardando retorno",
+    "Recurso encontrado",
+    "Sem retorno",
+    "Finalizado"
 ]
 
 
@@ -57,6 +80,8 @@ def carregar_aba(planilha, nome_aba, colunas):
         dados = aba.get_all_records()
         df = pd.DataFrame(dados)
 
+        df.columns = [str(coluna).strip() for coluna in df.columns]
+
         for coluna in colunas:
             if coluna not in df.columns:
                 df[coluna] = ""
@@ -83,7 +108,8 @@ def salvar_aba(planilha, nome_aba, df, colunas, permitir_vazio=False):
     try:
         if df is None:
             st.error(
-                f"Salvamento bloqueado: dados da aba '{nome_aba}' não encontrados.")
+                f"Salvamento bloqueado: dados da aba '{nome_aba}' não encontrados."
+            )
             st.stop()
 
         if df.empty and not permitir_vazio:
@@ -96,6 +122,8 @@ def salvar_aba(planilha, nome_aba, df, colunas, permitir_vazio=False):
         aba = planilha.worksheet(nome_aba)
 
         df_salvar = df.copy()
+        df_salvar.columns = [str(coluna).strip()
+                             for coluna in df_salvar.columns]
 
         for coluna in colunas:
             if coluna not in df_salvar.columns:
@@ -108,23 +136,120 @@ def salvar_aba(planilha, nome_aba, df, colunas, permitir_vazio=False):
         aba.clear()
         aba.update(valores)
 
+    except gspread.WorksheetNotFound:
+        aba = planilha.add_worksheet(
+            title=nome_aba,
+            rows=100,
+            cols=len(colunas)
+        )
+
+        df_salvar = df.copy()
+
+        for coluna in colunas:
+            if coluna not in df_salvar.columns:
+                df_salvar[coluna] = ""
+
+        df_salvar = df_salvar[colunas].fillna("")
+        valores = [df_salvar.columns.tolist()] + \
+            df_salvar.astype(str).values.tolist()
+        aba.update(valores)
+
     except Exception as erro:
         st.error(f"Erro ao salvar a aba '{nome_aba}'.")
         st.write(erro)
         st.stop()
 
 
-def salvar_google_sheets(df_total, df_pendentes, df_concluidas):
+def ordenar_localidades(df, colunas):
+    df = df.copy()
+    df.columns = [str(coluna).strip() for coluna in df.columns]
+
+    for coluna in colunas:
+        if coluna not in df.columns:
+            df[coluna] = ""
+
+    df = df[colunas]
+
+    df["UF"] = df["UF"].astype(str).str.strip().str.upper()
+    df["Cidade"] = df["Cidade"].astype(str).str.strip()
+
+    df = df[
+        (df["UF"] != "") &
+        (df["UF"].str.lower() != "nan") &
+        (df["Cidade"] != "") &
+        (df["Cidade"].str.lower() != "nan")
+    ]
+
+    df = df.sort_values(by=["Cidade", "UF"]).reset_index(drop=True)
+    return df
+
+
+def organizar_pendentes(df):
+    df = df.copy()
+    df.columns = [str(coluna).strip() for coluna in df.columns]
+
+    for coluna in COLUNAS_PENDENTES:
+        if coluna not in df.columns:
+            df[coluna] = ""
+
+    df = df[COLUNAS_PENDENTES]
+
+    df["UF"] = df["UF"].astype(str).str.strip().str.upper()
+    df["Cidade"] = df["Cidade"].astype(str).str.strip()
+    df["Prioridade"] = df["Prioridade"].astype(str).str.strip()
+
+    df["Data da Solicitação"] = df["Data da Solicitação"].astype(str).replace(
+        ["nan", "NaT", "None"], ""
+    )
+
+    df["Previsão"] = df["Previsão"].astype(str).replace(
+        ["nan", "NaT", "None"], ""
+    )
+
+    df = df[df["Cidade"] != ""].reset_index(drop=True)
+    return df
+
+
+def organizar_buscas(df):
+    df = df.copy()
+    df.columns = [str(coluna).strip() for coluna in df.columns]
+
+    for coluna in COLUNAS_BUSCAS:
+        if coluna not in df.columns:
+            df[coluna] = ""
+
+    df = df[COLUNAS_BUSCAS]
+
+    df["Agente"] = df["Agente"].astype(str).str.strip()
+    df["UF"] = df["UF"].astype(str).str.strip().str.upper()
+    df["Cidade"] = df["Cidade"].astype(str).str.strip()
+    df["Data da Busca"] = df["Data da Busca"].astype(str).replace(
+        ["nan", "NaT", "None"], ""
+    )
+    df["Status"] = df["Status"].astype(str).str.strip()
+    df["Observação"] = df["Observação"].astype(str).replace(
+        ["nan", "NaT", "None"], ""
+    )
+
+    df = df[df["Cidade"] != ""].reset_index(drop=True)
+    return df
+
+
+def salvar_google_sheets(df_total, df_pendentes, df_concluidas, df_buscas):
     planilha = conectar_google_sheets()
 
     df_total = ordenar_localidades(df_total, COLUNAS_TOTAL)
+    df_pendentes = organizar_pendentes(df_pendentes)
     df_concluidas = ordenar_localidades(df_concluidas, COLUNAS_CONCLUIDAS)
+    df_buscas = organizar_buscas(df_buscas)
 
     salvar_aba(planilha, ABA_TOTAL, df_total, COLUNAS_TOTAL)
     salvar_aba(planilha, ABA_PENDENTES, df_pendentes,
                COLUNAS_PENDENTES, permitir_vazio=True)
     salvar_aba(planilha, ABA_CONCLUIDAS, df_concluidas,
                COLUNAS_CONCLUIDAS, permitir_vazio=True)
+    salvar_aba(planilha, ABA_BUSCAS, df_buscas,
+               COLUNAS_BUSCAS, permitir_vazio=True)
 
 
 def imagem_base64(caminho):
@@ -133,23 +258,6 @@ def imagem_base64(caminho):
             return base64.b64encode(arquivo.read()).decode()
     except FileNotFoundError:
         return None
-
-
-def ordenar_localidades(df, colunas):
-    df = df.copy()
-
-    for coluna in colunas:
-        if coluna not in df.columns:
-            df[coluna] = ""
-
-    df = df[colunas]
-    df["UF"] = df["UF"].astype(str).str.strip().str.upper()
-    df["Cidade"] = df["Cidade"].astype(str).str.strip()
-
-    df = df[df["Cidade"] != ""]
-    df = df.sort_values(by=["Cidade", "UF"]).reset_index(drop=True)
-
-    return df
 
 
 def corrigir_relatorio(texto):
@@ -205,8 +313,9 @@ def preencher_relatorios_vazios(df):
         relatorio = str(df.loc[indice, "Relatório Detalhado"]).strip()
 
         if relatorio in ["", "nan", "None", "NaT"]:
-            df.loc[indice, "Relatório Detalhado"] = RELATORIOS_PADRAO[indice %
-                                                                      len(RELATORIOS_PADRAO)]
+            df.loc[indice, "Relatório Detalhado"] = RELATORIOS_PADRAO[
+                indice % len(RELATORIOS_PADRAO)
+            ]
         else:
             df.loc[indice, "Relatório Detalhado"] = corrigir_relatorio(
                 relatorio)
@@ -241,12 +350,22 @@ def gerar_excel_relatorio(df):
 
         for cell in worksheet[1]:
             cell.fill = PatternFill(
-                start_color=azul_escuro, end_color=azul_escuro, fill_type="solid")
+                start_color=azul_escuro,
+                end_color=azul_escuro,
+                fill_type="solid"
+            )
             cell.font = Font(color=branco, bold=True)
             cell.alignment = Alignment(
-                horizontal="center", vertical="center", wrap_text=True)
+                horizontal="center",
+                vertical="center",
+                wrap_text=True
+            )
             cell.border = Border(
-                left=borda_fina, right=borda_fina, top=borda_fina, bottom=borda_fina)
+                left=borda_fina,
+                right=borda_fina,
+                top=borda_fina,
+                bottom=borda_fina
+            )
 
         worksheet.row_dimensions[1].height = 28
 
@@ -254,11 +373,18 @@ def gerar_excel_relatorio(df):
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
                 cell.border = Border(
-                    left=borda_fina, right=borda_fina, top=borda_fina, bottom=borda_fina)
+                    left=borda_fina,
+                    right=borda_fina,
+                    top=borda_fina,
+                    bottom=borda_fina
+                )
 
                 if cell.row % 2 == 0:
                     cell.fill = PatternFill(
-                        start_color=cinza_claro, end_color=cinza_claro, fill_type="solid")
+                        start_color=cinza_claro,
+                        end_color=cinza_claro,
+                        fill_type="solid"
+                    )
 
         if "Prioridade" in df_export.columns:
             coluna_prioridade = df_export.columns.get_loc("Prioridade") + 1
@@ -269,15 +395,26 @@ def gerar_excel_relatorio(df):
 
                 if valor == "Alta":
                     celula.fill = PatternFill(
-                        start_color=vermelho, end_color=vermelho, fill_type="solid")
+                        start_color=vermelho,
+                        end_color=vermelho,
+                        fill_type="solid"
+                    )
                     celula.font = Font(bold=True)
+
                 elif valor == "Média":
                     celula.fill = PatternFill(
-                        start_color=amarelo, end_color=amarelo, fill_type="solid")
+                        start_color=amarelo,
+                        end_color=amarelo,
+                        fill_type="solid"
+                    )
                     celula.font = Font(bold=True)
+
                 elif valor == "Baixa":
                     celula.fill = PatternFill(
-                        start_color=verde, end_color=verde, fill_type="solid")
+                        start_color=verde,
+                        end_color=verde,
+                        fill_type="solid"
+                    )
                     celula.font = Font(bold=True)
 
         larguras = {
@@ -304,27 +441,12 @@ planilha = conectar_google_sheets()
 df_total = carregar_aba(planilha, ABA_TOTAL, COLUNAS_TOTAL)
 df_pendentes = carregar_aba(planilha, ABA_PENDENTES, COLUNAS_PENDENTES)
 df_concluidas = carregar_aba(planilha, ABA_CONCLUIDAS, COLUNAS_CONCLUIDAS)
+df_buscas = carregar_aba(planilha, ABA_BUSCAS, COLUNAS_BUSCAS)
 
 df_total = ordenar_localidades(df_total, COLUNAS_TOTAL)
+df_pendentes = organizar_pendentes(df_pendentes)
 df_concluidas = ordenar_localidades(df_concluidas, COLUNAS_CONCLUIDAS)
-
-for coluna in COLUNAS_PENDENTES:
-    if coluna not in df_pendentes.columns:
-        df_pendentes[coluna] = ""
-
-df_pendentes = df_pendentes[COLUNAS_PENDENTES]
-
-df_pendentes["Cidade"] = df_pendentes["Cidade"].astype(str).str.strip()
-df_pendentes["UF"] = df_pendentes["UF"].astype(str).str.strip().str.upper()
-df_pendentes["Prioridade"] = df_pendentes["Prioridade"].astype(str).str.strip()
-
-df_pendentes["Data da Solicitação"] = df_pendentes["Data da Solicitação"].astype(str).replace(
-    ["nan", "NaT", "None"], ""
-)
-
-df_pendentes["Previsão"] = df_pendentes["Previsão"].astype(str).replace(
-    ["nan", "NaT", "None"], ""
-)
+df_buscas = organizar_buscas(df_buscas)
 
 df_pendentes = preencher_relatorios_vazios(df_pendentes)
 
@@ -384,12 +506,14 @@ with titulo_col:
     st.markdown('<div class="header-title">', unsafe_allow_html=True)
     st.title("Projeto IBM")
     st.caption(
-        "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado")
+        "Monitoramento de localidades abertas, pendentes, concluídas e relatório detalhado"
+    )
     st.markdown("</div>", unsafe_allow_html=True)
 
-aba_dashboard, aba_relatorio, aba_total, aba_concluidas = st.tabs([
+aba_dashboard, aba_relatorio, aba_buscas, aba_total, aba_concluidas = st.tabs([
     "Dashboard",
     "Relatório Detalhado",
+    "Gestão de Buscas",
     "Localidades Total",
     "Localidades Concluídas"
 ])
@@ -431,7 +555,9 @@ with aba_dashboard:
 
         with add_col3:
             nova_prioridade = st.selectbox(
-                "Prioridade", ["Alta", "Média", "Baixa"])
+                "Prioridade",
+                ["Alta", "Média", "Baixa"]
+            )
 
             novo_relatorio = st.text_area(
                 "Relatório Detalhado",
@@ -480,8 +606,9 @@ with aba_dashboard:
                     }
 
                     if not nova_linha_pendente["Relatório Detalhado"]:
-                        nova_linha_pendente["Relatório Detalhado"] = RELATORIOS_PADRAO[len(
-                            df_pendentes) % len(RELATORIOS_PADRAO)]
+                        nova_linha_pendente["Relatório Detalhado"] = RELATORIOS_PADRAO[
+                            len(df_pendentes) % len(RELATORIOS_PADRAO)
+                        ]
 
                     df_total = pd.concat(
                         [df_total, pd.DataFrame([nova_linha_total])],
@@ -493,7 +620,8 @@ with aba_dashboard:
                         ignore_index=True
                     )
 
-                    salvar_google_sheets(df_total, df_pendentes, df_concluidas)
+                    salvar_google_sheets(
+                        df_total, df_pendentes, df_concluidas, df_buscas)
 
                     st.success("Localidade adicionada com sucesso.")
                     st.rerun()
@@ -522,7 +650,10 @@ with aba_dashboard:
         )
 
         fig_status.update_traces(
-            textposition="inside", textinfo="percent+label")
+            textposition="inside",
+            textinfo="percent+label"
+        )
+
         st.plotly_chart(fig_status, use_container_width=True)
 
     with graf2:
@@ -568,7 +699,10 @@ with aba_dashboard:
             quantidade_uf = int(linha_uf["Quantidade"])
 
             with colunas_uf[posicao % total_colunas_uf]:
-                if st.button(f"{uf_atual} ({quantidade_uf})", key=f"botao_uf_{uf_atual}"):
+                if st.button(
+                    f"{uf_atual} ({quantidade_uf})",
+                    key=f"botao_uf_{uf_atual}"
+                ):
                     if st.session_state["uf_expandida"] == uf_atual:
                         st.session_state["uf_expandida"] = None
                     else:
@@ -586,13 +720,19 @@ with aba_dashboard:
             for _, linha_localidade in localidades_estado.iterrows():
                 cidade = str(linha_localidade.get("Cidade", "")).strip()
                 prioridade_localidade = str(
-                    linha_localidade.get("Prioridade", "")).strip()
+                    linha_localidade.get("Prioridade", "")
+                ).strip()
                 data_solicitacao = linha_localidade.get(
-                    "Data da Solicitação", "-")
+                    "Data da Solicitação",
+                    "-"
+                )
                 previsao = linha_localidade.get("Previsão", "-")
                 relatorio = linha_localidade.get("Relatório Detalhado", "")
 
-                with st.expander(f"📍 {cidade} | Prioridade: {prioridade_localidade}", expanded=False):
+                with st.expander(
+                    f"📍 {cidade} | Prioridade: {prioridade_localidade}",
+                    expanded=False
+                ):
                     st.markdown(f"**UF:** {uf_selecionada}")
                     st.markdown(f"**Cidade:** {cidade}")
                     st.markdown(f"**Prioridade:** {prioridade_localidade}")
@@ -614,8 +754,10 @@ with aba_dashboard:
         busca = st.text_input("Pesquisar cidade")
 
     with filtro2:
-        prioridade = st.selectbox("Filtrar por prioridade", [
-                                  "Todas", "Alta", "Média", "Baixa"])
+        prioridade = st.selectbox(
+            "Filtrar por prioridade",
+            ["Todas", "Alta", "Média", "Baixa"]
+        )
 
     with filtro3:
         uf = st.selectbox(
@@ -640,8 +782,13 @@ with aba_dashboard:
     tabela = tabela[colunas_editor]
 
     if busca:
-        tabela = tabela[tabela["Cidade"].astype(
-            str).str.contains(busca, case=False, na=False)]
+        tabela = tabela[
+            tabela["Cidade"].astype(str).str.contains(
+                busca,
+                case=False,
+                na=False
+            )
+        ]
 
     if prioridade != "Todas":
         tabela = tabela[tabela["Prioridade"] == prioridade]
@@ -707,7 +854,7 @@ with aba_dashboard:
                 index=indices_concluir
             ).reset_index(drop=True)
 
-        salvar_google_sheets(df_total, df_pendentes, df_concluidas)
+        salvar_google_sheets(df_total, df_pendentes, df_concluidas, df_buscas)
 
         st.success("Alterações salvas com sucesso.")
         st.rerun()
@@ -749,8 +896,9 @@ with aba_relatorio:
         ]
 
     if uf_relatorio != "Todas":
-        tabela_relatorio = tabela_relatorio[tabela_relatorio["UF"]
-                                            == uf_relatorio]
+        tabela_relatorio = tabela_relatorio[
+            tabela_relatorio["UF"] == uf_relatorio
+        ]
 
     if prioridade_relatorio != "Todas":
         tabela_relatorio = tabela_relatorio[
@@ -792,10 +940,13 @@ with aba_relatorio:
     with col_salvar_rel1:
         if st.button("Salvar alterações do relatório"):
             for indice_original, novo_relatorio in relatorios_editados.items():
-                df_pendentes.loc[indice_original, "Relatório Detalhado"] = str(
-                    novo_relatorio).strip()
+                df_pendentes.loc[
+                    indice_original,
+                    "Relatório Detalhado"
+                ] = str(novo_relatorio).strip()
 
-            salvar_google_sheets(df_total, df_pendentes, df_concluidas)
+            salvar_google_sheets(df_total, df_pendentes,
+                                 df_concluidas, df_buscas)
 
             st.success("Relatório detalhado atualizado com sucesso.")
             st.rerun()
@@ -803,9 +954,176 @@ with aba_relatorio:
     with col_salvar_rel2:
         if st.button("Salvar textos automáticos no Google Sheets"):
             df_pendentes = preencher_relatorios_vazios(df_pendentes)
-            salvar_google_sheets(df_total, df_pendentes, df_concluidas)
+            salvar_google_sheets(df_total, df_pendentes,
+                                 df_concluidas, df_buscas)
             st.success(
                 "Relatórios vazios preenchidos e salvos no Google Sheets.")
+            st.rerun()
+
+
+with aba_buscas:
+    st.subheader("Gestão de Buscas")
+    st.caption(
+        "Controle das localidades que Felipe e Diovane estão buscando, com status e observações."
+    )
+
+    col_b1, col_b2 = st.columns(2)
+    col_b1.metric("Buscas Felipe", len(
+        df_buscas[df_buscas["Agente"] == "Felipe"]))
+    col_b2.metric("Buscas Diovane", len(
+        df_buscas[df_buscas["Agente"] == "Diovane"]))
+
+    st.divider()
+
+    st.subheader("Adicionar Nova Busca")
+
+    with st.expander("Cadastrar busca", expanded=False):
+        busca_col1, busca_col2, busca_col3 = st.columns(3)
+
+        with busca_col1:
+            novo_agente = st.selectbox("Agente", AGENTES)
+            nova_uf_busca = st.text_input("UF da busca", max_chars=2).upper()
+
+        with busca_col2:
+            nova_cidade_busca = st.text_input("Cidade da busca")
+            nova_data_busca = st.date_input("Data da Busca")
+
+        with busca_col3:
+            novo_status_busca = st.selectbox("Status", STATUS_BUSCA)
+            nova_observacao_busca = st.text_area("Observação", height=100)
+
+        if st.button("Adicionar Busca"):
+            if not nova_uf_busca or not nova_cidade_busca:
+                st.warning("Preencha pelo menos UF e Cidade.")
+            else:
+                nova_linha_busca = {
+                    "Agente": novo_agente,
+                    "UF": nova_uf_busca.strip().upper(),
+                    "Cidade": nova_cidade_busca.strip().title(),
+                    "Data da Busca": nova_data_busca.strftime("%d/%m/%Y"),
+                    "Status": novo_status_busca,
+                    "Observação": nova_observacao_busca.strip()
+                }
+
+                df_buscas = pd.concat(
+                    [df_buscas, pd.DataFrame([nova_linha_busca])],
+                    ignore_index=True
+                )
+
+                salvar_google_sheets(df_total, df_pendentes,
+                                     df_concluidas, df_buscas)
+
+                st.success("Busca adicionada com sucesso.")
+                st.rerun()
+
+    st.divider()
+
+    st.subheader("Tabela de Buscas")
+
+    filtro_busca1, filtro_busca2, filtro_busca3 = st.columns(3)
+
+    with filtro_busca1:
+        filtro_agente = st.selectbox(
+            "Filtrar por agente",
+            ["Todos"] + AGENTES
+        )
+
+    with filtro_busca2:
+        filtro_status = st.selectbox(
+            "Filtrar por status",
+            ["Todos"] + STATUS_BUSCA
+        )
+
+    with filtro_busca3:
+        filtro_cidade_busca = st.text_input("Pesquisar cidade na gestão")
+
+    tabela_buscas = df_buscas.copy()
+    tabela_buscas["__linha_original"] = tabela_buscas.index
+    tabela_buscas["Excluir"] = False
+
+    if filtro_agente != "Todos":
+        tabela_buscas = tabela_buscas[tabela_buscas["Agente"] == filtro_agente]
+
+    if filtro_status != "Todos":
+        tabela_buscas = tabela_buscas[tabela_buscas["Status"] == filtro_status]
+
+    if filtro_cidade_busca:
+        tabela_buscas = tabela_buscas[
+            tabela_buscas["Cidade"].astype(str).str.contains(
+                filtro_cidade_busca,
+                case=False,
+                na=False
+            )
+        ]
+
+    if tabela_buscas.empty:
+        st.info("Nenhuma busca encontrada para os filtros selecionados.")
+    else:
+        tabela_buscas_editada = st.data_editor(
+            tabela_buscas[
+                [
+                    "Agente",
+                    "UF",
+                    "Cidade",
+                    "Data da Busca",
+                    "Status",
+                    "Observação",
+                    "Excluir",
+                    "__linha_original"
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+            key="editor_buscas",
+            disabled=["UF", "Cidade", "Data da Busca", "__linha_original"],
+            column_config={
+                "Agente": st.column_config.SelectboxColumn(
+                    "Agente",
+                    options=AGENTES,
+                    required=True
+                ),
+                "Status": st.column_config.SelectboxColumn(
+                    "Status",
+                    options=STATUS_BUSCA,
+                    required=True
+                ),
+                "Observação": st.column_config.TextColumn(
+                    "Observação"
+                ),
+                "Excluir": st.column_config.CheckboxColumn(
+                    "Excluir",
+                    help="Marque para remover esta busca",
+                    default=False
+                ),
+                "__linha_original": None
+            }
+        )
+
+        if st.button("Salvar Gestão de Buscas"):
+            indices_excluir_busca = []
+
+            for _, linha in tabela_buscas_editada.iterrows():
+                indice_original = int(linha["__linha_original"])
+
+                df_buscas.loc[indice_original, "Agente"] = str(
+                    linha["Agente"]).strip()
+                df_buscas.loc[indice_original, "Status"] = str(
+                    linha["Status"]).strip()
+                df_buscas.loc[indice_original, "Observação"] = str(
+                    linha["Observação"]).strip()
+
+                if bool(linha["Excluir"]):
+                    indices_excluir_busca.append(indice_original)
+
+            if indices_excluir_busca:
+                df_buscas = df_buscas.drop(
+                    index=indices_excluir_busca
+                ).reset_index(drop=True)
+
+            salvar_google_sheets(df_total, df_pendentes,
+                                 df_concluidas, df_buscas)
+
+            st.success("Gestão de buscas atualizada com sucesso.")
             st.rerun()
 
 
@@ -872,8 +1190,9 @@ with aba_total:
             if linhas_para_excluir.empty:
                 st.warning("Nenhuma localidade foi marcada para exclusão.")
             else:
-                indices_total_excluir = linhas_para_excluir["__linha_original"].astype(
-                    int).tolist()
+                indices_total_excluir = linhas_para_excluir[
+                    "__linha_original"
+                ].astype(int).tolist()
 
                 localidades_excluir = df_total.loc[
                     indices_total_excluir,
@@ -881,7 +1200,8 @@ with aba_total:
                 ].copy()
 
                 df_total = df_total.drop(
-                    index=indices_total_excluir).reset_index(drop=True)
+                    index=indices_total_excluir
+                ).reset_index(drop=True)
 
                 for _, localidade in localidades_excluir.iterrows():
                     uf_excluir = str(localidade["UF"]).upper().strip()
@@ -903,7 +1223,8 @@ with aba_total:
                         )
                     ].reset_index(drop=True)
 
-                salvar_google_sheets(df_total, df_pendentes, df_concluidas)
+                salvar_google_sheets(df_total, df_pendentes,
+                                     df_concluidas, df_buscas)
 
                 st.success("Localidade(s) excluída(s) com sucesso.")
                 st.rerun()
@@ -911,7 +1232,9 @@ with aba_total:
 
 with aba_concluidas:
     st.subheader("Localidades Concluídas")
-    st.caption("Lista de localidades concluídas, organizada em ordem alfabética.")
+    st.caption(
+        "Lista de localidades concluídas. Também é possível retornar uma localidade para pendentes."
+    )
 
     filtro_conc1, filtro_conc2 = st.columns(2)
 
@@ -925,6 +1248,8 @@ with aba_concluidas:
         )
 
     tabela_concluidas = df_concluidas.copy()
+    tabela_concluidas["__linha_original"] = tabela_concluidas.index
+    tabela_concluidas["Retornar para Pendentes"] = False
 
     if busca_concluida:
         tabela_concluidas = tabela_concluidas[
@@ -940,17 +1265,93 @@ with aba_concluidas:
             tabela_concluidas["UF"] == uf_concluida
         ]
 
-    st.dataframe(
-        tabela_concluidas[["UF", "Cidade"]],
-        use_container_width=True,
-        hide_index=True
-    )
+    if tabela_concluidas.empty:
+        st.info("Nenhuma localidade concluída encontrada.")
+    else:
+        tabela_concluidas_editada = st.data_editor(
+            tabela_concluidas[
+                ["UF", "Cidade", "Retornar para Pendentes", "__linha_original"]
+            ],
+            use_container_width=True,
+            hide_index=True,
+            key="editor_concluidas",
+            disabled=["UF", "Cidade", "__linha_original"],
+            column_config={
+                "Retornar para Pendentes": st.column_config.CheckboxColumn(
+                    "Retornar para Pendentes",
+                    help="Marque para retornar a localidade para pendentes",
+                    default=False
+                ),
+                "__linha_original": None
+            }
+        )
+
+        confirmar_retorno = st.checkbox(
+            "Confirmo que desejo retornar as localidades marcadas para Pendentes"
+        )
+
+        if st.button("Retornar localidades marcadas"):
+            if not confirmar_retorno:
+                st.warning("Marque a confirmação antes de retornar.")
+            else:
+                linhas_retorno = tabela_concluidas_editada[
+                    tabela_concluidas_editada["Retornar para Pendentes"] == True
+                ]
+
+                if linhas_retorno.empty:
+                    st.warning("Nenhuma localidade foi marcada para retornar.")
+                else:
+                    indices_retorno = linhas_retorno[
+                        "__linha_original"
+                    ].astype(int).tolist()
+
+                    localidades_retorno = df_concluidas.loc[
+                        indices_retorno,
+                        ["UF", "Cidade"]
+                    ].copy()
+
+                    hoje = datetime.now().strftime("%d/%m/%Y")
+
+                    novas_pendentes = []
+
+                    for indice, linha in localidades_retorno.iterrows():
+                        novas_pendentes.append({
+                            "UF": str(linha["UF"]).strip().upper(),
+                            "Cidade": str(linha["Cidade"]).strip(),
+                            "Data da Solicitação": hoje,
+                            "Previsão": "",
+                            "Prioridade": "Alta",
+                            "Relatório Detalhado": RELATORIOS_PADRAO[
+                                len(df_pendentes) % len(RELATORIOS_PADRAO)
+                            ]
+                        })
+
+                    df_pendentes = pd.concat(
+                        [df_pendentes, pd.DataFrame(novas_pendentes)],
+                        ignore_index=True
+                    )
+
+                    df_pendentes = df_pendentes.drop_duplicates(
+                        subset=["UF", "Cidade"],
+                        keep="last"
+                    ).reset_index(drop=True)
+
+                    df_concluidas = df_concluidas.drop(
+                        index=indices_retorno
+                    ).reset_index(drop=True)
+
+                    salvar_google_sheets(
+                        df_total, df_pendentes, df_concluidas, df_buscas)
+
+                    st.success(
+                        "Localidade(s) retornada(s) para Pendentes com sucesso.")
+                    st.rerun()
 
 
 st.divider()
 st.subheader("Exportação de Relatórios")
 
-col_down1, col_down2, col_down3 = st.columns(3)
+col_down1, col_down2, col_down3, col_down4 = st.columns(4)
 
 with col_down1:
     st.download_button(
@@ -969,6 +1370,14 @@ with col_down2:
     )
 
 with col_down3:
+    st.download_button(
+        label="Baixar buscas em CSV",
+        data=df_buscas.to_csv(index=False).encode("utf-8-sig"),
+        file_name="buscas_por_agente.csv",
+        mime="text/csv"
+    )
+
+with col_down4:
     st.download_button(
         label="Baixar relatório detalhado em Excel",
         data=gerar_excel_relatorio(df_pendentes),
