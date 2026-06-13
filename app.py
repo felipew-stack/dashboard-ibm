@@ -2,15 +2,127 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import base64
+import gspread
 from io import BytesIO
+from google.oauth2.service_account import Credentials
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Dashboard IBM", layout="wide")
 
-ARQUIVO_EXCEL = "Report IBM 01-06 (1) (3).xlsx"
+# ==========================
+# CONFIGURAÇÕES
+# ==========================
+
+SHEET_ID = "1gNBenj4s19pOtlNbIAZp0_CYpAXBidxXbAtg9hdOXcM"
+
+ABA_TOTAL = "Localidades Total"
+ABA_PENDENTES = "Localidades Pendentes"
+
 ARQUIVO_LOGO = "logo_3am.png"
 
+COLUNAS_PADRAO = [
+    "UF",
+    "Cidade",
+    "Data da Solicitação",
+    "Previsão",
+    "Prioridade",
+    "Relatório Detalhado"
+]
+
+
+# ==========================
+# GOOGLE SHEETS
+# ==========================
+
+def conectar_google_sheets():
+    try:
+        escopos = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+
+        credenciais = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=escopos
+        )
+
+        cliente = gspread.authorize(credenciais)
+        planilha = cliente.open_by_key(SHEET_ID)
+
+        return planilha
+
+    except Exception as erro:
+        st.error("Erro ao conectar com o Google Sheets.")
+        st.write(erro)
+        st.stop()
+
+
+def carregar_aba(planilha, nome_aba):
+    try:
+        aba = planilha.worksheet(nome_aba)
+        dados = aba.get_all_records()
+
+        df = pd.DataFrame(dados)
+
+        for coluna in COLUNAS_PADRAO:
+            if coluna not in df.columns:
+                df[coluna] = ""
+
+        df = df[COLUNAS_PADRAO]
+
+        return df
+
+    except gspread.WorksheetNotFound:
+        aba = planilha.add_worksheet(
+            title=nome_aba,
+            rows=100,
+            cols=len(COLUNAS_PADRAO)
+        )
+        aba.update([COLUNAS_PADRAO])
+        return pd.DataFrame(columns=COLUNAS_PADRAO)
+
+    except Exception as erro:
+        st.error(f"Erro ao carregar a aba '{nome_aba}'.")
+        st.write(erro)
+        st.stop()
+
+
+def salvar_aba(planilha, nome_aba, df):
+    try:
+        aba = planilha.worksheet(nome_aba)
+
+        df_salvar = df.copy()
+
+        for coluna in COLUNAS_PADRAO:
+            if coluna not in df_salvar.columns:
+                df_salvar[coluna] = ""
+
+        df_salvar = df_salvar[COLUNAS_PADRAO]
+        df_salvar = df_salvar.fillna("")
+
+        valores = [df_salvar.columns.tolist()] + df_salvar.astype(str).values.tolist()
+
+        aba.clear()
+
+        if valores:
+            aba.update(valores)
+
+    except Exception as erro:
+        st.error(f"Erro ao salvar a aba '{nome_aba}'.")
+        st.write(erro)
+        st.stop()
+
+
+def salvar_google_sheets(df_total, df_pendentes):
+    planilha = conectar_google_sheets()
+    salvar_aba(planilha, ABA_TOTAL, df_total)
+    salvar_aba(planilha, ABA_PENDENTES, df_pendentes)
+
+
+# ==========================
+# FUNÇÕES AUXILIARES
+# ==========================
 
 def imagem_base64(caminho):
     try:
@@ -18,21 +130,6 @@ def imagem_base64(caminho):
             return base64.b64encode(arquivo.read()).decode()
     except FileNotFoundError:
         return None
-
-
-def salvar_excel(df_total, df_pendentes):
-    with pd.ExcelWriter(
-        ARQUIVO_EXCEL,
-        engine="openpyxl",
-        mode="a",
-        if_sheet_exists="replace"
-    ) as writer:
-        df_total.to_excel(writer, sheet_name="Localidades Total", index=False)
-        df_pendentes.to_excel(
-            writer,
-            sheet_name="Localidades Pendentes",
-            index=False
-        )
 
 
 def corrigir_relatorio(texto):
@@ -194,37 +291,24 @@ def gerar_excel_relatorio(df):
     return output.getvalue()
 
 
-try:
-    df_total = pd.read_excel(ARQUIVO_EXCEL, sheet_name="Localidades Total")
-    df_pendentes = pd.read_excel(
-        ARQUIVO_EXCEL,
-        sheet_name="Localidades Pendentes"
-    )
-except FileNotFoundError:
-    st.error(f"Arquivo '{ARQUIVO_EXCEL}' não encontrado.")
-    st.stop()
-except Exception as erro:
-    st.error("Erro ao carregar a planilha.")
-    st.write(erro)
-    st.stop()
+# ==========================
+# CARREGAMENTO DOS DADOS
+# ==========================
 
+planilha = conectar_google_sheets()
 
-colunas_padrao = [
-    "UF",
-    "Cidade",
-    "Data da Solicitação",
-    "Previsão",
-    "Prioridade",
-    "Relatório Detalhado"
-]
+df_total = carregar_aba(planilha, ABA_TOTAL)
+df_pendentes = carregar_aba(planilha, ABA_PENDENTES)
 
-for coluna in colunas_padrao:
+for coluna in COLUNAS_PADRAO:
     if coluna not in df_total.columns:
         df_total[coluna] = ""
 
     if coluna not in df_pendentes.columns:
         df_pendentes[coluna] = ""
 
+df_total = df_total[COLUNAS_PADRAO]
+df_pendentes = df_pendentes[COLUNAS_PADRAO]
 
 df_total["Cidade"] = df_total["Cidade"].astype(str).str.strip()
 df_total["UF"] = df_total["UF"].astype(str).str.strip().str.upper()
@@ -235,23 +319,24 @@ df_pendentes["Prioridade"] = df_pendentes["Prioridade"].astype(str).str.strip()
 
 for df in [df_total, df_pendentes]:
     if "Data da Solicitação" in df.columns:
-        df["Data da Solicitação"] = pd.to_datetime(
-            df["Data da Solicitação"],
-            errors="coerce"
-        ).dt.strftime("%d/%m/%Y")
+        df["Data da Solicitação"] = df["Data da Solicitação"].astype(str).replace(
+            ["nan", "NaT", "None"], ""
+        )
 
     if "Previsão" in df.columns:
-        df["Previsão"] = pd.to_datetime(
-            df["Previsão"],
-            errors="coerce"
-        ).dt.strftime("%d/%m/%Y")
-
+        df["Previsão"] = df["Previsão"].astype(str).replace(
+            ["nan", "NaT", "None"], ""
+        )
 
 if "Relatório Detalhado" in df_pendentes.columns:
     df_pendentes["Relatório Detalhado"] = df_pendentes[
         "Relatório Detalhado"
     ].apply(corrigir_relatorio)
 
+
+# ==========================
+# CÁLCULOS
+# ==========================
 
 df_total_chave = df_total.copy()
 df_pendentes_chave = df_pendentes.copy()
@@ -274,7 +359,6 @@ df_concluidas = df_total_chave[
     ~df_total_chave["__chave"].isin(chaves_pendentes)
 ].drop(columns=["__chave"])
 
-
 total = len(df_total)
 pendentes = len(df_pendentes)
 concluidas = len(df_concluidas)
@@ -284,6 +368,10 @@ alta = len(df_pendentes[df_pendentes["Prioridade"] == "Alta"])
 media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
 
+
+# ==========================
+# ESTILO
+# ==========================
 
 st.markdown(
     """
@@ -311,6 +399,10 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
+# ==========================
+# CABEÇALHO
+# ==========================
 
 logo_col, titulo_col = st.columns([1.2, 4])
 
@@ -344,7 +436,9 @@ aba_dashboard, aba_relatorio, aba_total, aba_concluidas = st.tabs([
     "Localidades Total",
     "Localidades Concluídas"
 ])
-
+# ==========================
+# ABA DASHBOARD
+# ==========================
 
 with aba_dashboard:
     st.divider()
@@ -403,22 +497,18 @@ with aba_dashboard:
 
                 existe_total = df_total[
                     (df_total["Cidade"].astype(str).str.upper() == cidade_formatada.upper()) &
-                    (df_total["UF"].astype(str).str.upper()
-                     == uf_formatada.upper())
+                    (df_total["UF"].astype(str).str.upper() == uf_formatada.upper())
                 ]
 
                 existe_pendente = df_pendentes[
                     (df_pendentes["Cidade"].astype(str).str.upper() == cidade_formatada.upper()) &
-                    (df_pendentes["UF"].astype(
-                        str).str.upper() == uf_formatada.upper())
+                    (df_pendentes["UF"].astype(str).str.upper() == uf_formatada.upper())
                 ]
 
                 if not existe_total.empty:
-                    st.warning(
-                        "Essa localidade já existe em Localidades Total.")
+                    st.warning("Essa localidade já existe em Localidades Total.")
                 elif not existe_pendente.empty:
-                    st.warning(
-                        "Essa localidade já existe em Localidades Pendentes.")
+                    st.warning("Essa localidade já existe em Localidades Pendentes.")
                 else:
                     nova_linha = {
                         "UF": uf_formatada,
@@ -429,27 +519,17 @@ with aba_dashboard:
                         "Relatório Detalhado": novo_relatorio.strip()
                     }
 
-                    for coluna in df_total.columns:
-                        if coluna not in nova_linha:
-                            nova_linha[coluna] = ""
-
-                    for coluna in df_pendentes.columns:
-                        if coluna not in nova_linha:
-                            nova_linha[coluna] = ""
-
                     df_total = pd.concat(
-                        [df_total, pd.DataFrame([nova_linha])[
-                            df_total.columns]],
+                        [df_total, pd.DataFrame([nova_linha])],
                         ignore_index=True
                     )
 
                     df_pendentes = pd.concat(
-                        [df_pendentes, pd.DataFrame([nova_linha])[
-                            df_pendentes.columns]],
+                        [df_pendentes, pd.DataFrame([nova_linha])],
                         ignore_index=True
                     )
 
-                    salvar_excel(df_total, df_pendentes)
+                    salvar_google_sheets(df_total, df_pendentes)
 
                     st.success("Localidade adicionada com sucesso.")
                     st.rerun()
@@ -620,7 +700,7 @@ with aba_dashboard:
 
     if busca:
         tabela = tabela[
-            tabela["Cidade"].str.contains(busca, case=False, na=False)
+            tabela["Cidade"].astype(str).str.contains(busca, case=False, na=False)
         ]
 
     if prioridade != "Todas":
@@ -674,10 +754,16 @@ with aba_dashboard:
                 index=indices_concluir
             ).reset_index(drop=True)
 
-        salvar_excel(df_total, df_pendentes)
+        salvar_google_sheets(df_total, df_pendentes)
 
         st.success("Alterações salvas com sucesso.")
         st.rerun()
+
+
+# ==========================
+# ABA RELATÓRIO
+# ==========================
+
 with aba_relatorio:
     st.subheader("Relatório Detalhado das Localidades")
     st.caption(
@@ -775,11 +861,15 @@ with aba_relatorio:
                     "Relatório Detalhado"
                 ] = str(novo_relatorio).strip()
 
-            salvar_excel(df_total, df_pendentes)
+            salvar_google_sheets(df_total, df_pendentes)
 
             st.success("Relatório detalhado atualizado com sucesso.")
             st.rerun()
 
+
+# ==========================
+# ABA LOCALIDADES TOTAL
+# ==========================
 
 with aba_total:
     st.subheader("Localidades Total")
@@ -884,16 +974,19 @@ with aba_total:
                     df_pendentes = df_pendentes[
                         ~(
                             (df_pendentes["UF"].astype(str).str.upper().str.strip() == uf_excluir) &
-                            (df_pendentes["Cidade"].astype(
-                                str).str.upper().str.strip() == cidade_excluir)
+                            (df_pendentes["Cidade"].astype(str).str.upper().str.strip() == cidade_excluir)
                         )
                     ].reset_index(drop=True)
 
-                salvar_excel(df_total, df_pendentes)
+                salvar_google_sheets(df_total, df_pendentes)
 
                 st.success("Localidade(s) excluída(s) com sucesso.")
                 st.rerun()
 
+
+# ==========================
+# ABA CONCLUÍDAS
+# ==========================
 
 with aba_concluidas:
     st.subheader("Localidades Concluídas")
@@ -907,6 +1000,10 @@ with aba_concluidas:
         hide_index=True
     )
 
+
+# ==========================
+# EXPORTAÇÃO
+# ==========================
 
 st.divider()
 st.subheader("Exportação de Relatórios")
