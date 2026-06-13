@@ -101,7 +101,8 @@ def salvar_aba(planilha, nome_aba, df):
         df_salvar = df_salvar[COLUNAS_PADRAO]
         df_salvar = df_salvar.fillna("")
 
-        valores = [df_salvar.columns.tolist()] + df_salvar.astype(str).values.tolist()
+        valores = [df_salvar.columns.tolist()] + \
+            df_salvar.astype(str).values.tolist()
 
         aba.clear()
 
@@ -338,6 +339,11 @@ if "Relatório Detalhado" in df_pendentes.columns:
 # CÁLCULOS
 # ==========================
 
+total = len(df_total)
+pendentes = len(df_pendentes)
+concluidas = total - pendentes
+percentual = round((concluidas / total) * 100, 1) if total > 0 else 0
+
 df_total_chave = df_total.copy()
 df_pendentes_chave = df_pendentes.copy()
 
@@ -359,15 +365,9 @@ df_concluidas = df_total_chave[
     ~df_total_chave["__chave"].isin(chaves_pendentes)
 ].drop(columns=["__chave"])
 
-total = len(df_total)
-pendentes = len(df_pendentes)
-concluidas = len(df_concluidas)
-percentual = round((concluidas / total) * 100, 1) if total > 0 else 0
-
 alta = len(df_pendentes[df_pendentes["Prioridade"] == "Alta"])
 media = len(df_pendentes[df_pendentes["Prioridade"] == "Média"])
 baixa = len(df_pendentes[df_pendentes["Prioridade"] == "Baixa"])
-
 
 # ==========================
 # ESTILO
@@ -497,18 +497,22 @@ with aba_dashboard:
 
                 existe_total = df_total[
                     (df_total["Cidade"].astype(str).str.upper() == cidade_formatada.upper()) &
-                    (df_total["UF"].astype(str).str.upper() == uf_formatada.upper())
+                    (df_total["UF"].astype(str).str.upper()
+                     == uf_formatada.upper())
                 ]
 
                 existe_pendente = df_pendentes[
                     (df_pendentes["Cidade"].astype(str).str.upper() == cidade_formatada.upper()) &
-                    (df_pendentes["UF"].astype(str).str.upper() == uf_formatada.upper())
+                    (df_pendentes["UF"].astype(
+                        str).str.upper() == uf_formatada.upper())
                 ]
 
                 if not existe_total.empty:
-                    st.warning("Essa localidade já existe em Localidades Total.")
+                    st.warning(
+                        "Essa localidade já existe em Localidades Total.")
                 elif not existe_pendente.empty:
-                    st.warning("Essa localidade já existe em Localidades Pendentes.")
+                    st.warning(
+                        "Essa localidade já existe em Localidades Pendentes.")
                 else:
                     nova_linha = {
                         "UF": uf_formatada,
@@ -700,7 +704,8 @@ with aba_dashboard:
 
     if busca:
         tabela = tabela[
-            tabela["Cidade"].astype(str).str.contains(busca, case=False, na=False)
+            tabela["Cidade"].astype(str).str.contains(
+                busca, case=False, na=False)
         ]
 
     if prioridade != "Todas":
@@ -974,7 +979,8 @@ with aba_total:
                     df_pendentes = df_pendentes[
                         ~(
                             (df_pendentes["UF"].astype(str).str.upper().str.strip() == uf_excluir) &
-                            (df_pendentes["Cidade"].astype(str).str.upper().str.strip() == cidade_excluir)
+                            (df_pendentes["Cidade"].astype(
+                                str).str.upper().str.strip() == cidade_excluir)
                         )
                     ].reset_index(drop=True)
 
